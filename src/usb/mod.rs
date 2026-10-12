@@ -11,6 +11,22 @@ pub struct UsbDevice {
     pub name: String,
 }
 
+pub fn is_valid_udid(udid: &str) -> bool {
+    if udid.len() == 40 && udid.chars().all(|c| c.is_ascii_hexdigit()) {
+        return true;
+    }
+    if udid.len() == 25 && udid.as_bytes()[8] == b'-' {
+        let (prefix, suffix) = udid.split_at(8);
+        let suffix = &suffix[1..];
+        if prefix.chars().all(|c| c.is_ascii_hexdigit())
+            && suffix.chars().all(|c| c.is_ascii_hexdigit())
+        {
+            return true;
+        }
+    }
+    false
+}
+
 pub fn list_usb_devices() -> Result<Vec<UsbDevice>> {
     let output = Command::new("idevice_id")
         .arg("-l")
@@ -29,7 +45,7 @@ pub fn list_usb_devices() -> Result<Vec<UsbDevice>> {
         .lines()
         .filter_map(|line| {
             let udid = line.trim().to_string();
-            if udid.len() == 40 && udid.chars().all(|c| c.is_ascii_hexdigit()) {
+            if is_valid_udid(&udid) {
                 Some(UsbDevice {
                     name: format!("iPhone-{}", &udid[..8.min(udid.len())]),
                     udid,

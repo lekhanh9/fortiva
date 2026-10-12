@@ -22,7 +22,9 @@ pub struct Session {
 
 impl Session {
     pub fn dir() -> Result<PathBuf> {
-        let home = std::env::var("HOME").context("HOME not set")?;
+        let home = std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .unwrap_or_else(|_| ".".to_string());
         let dir = PathBuf::from(home).join(".fortiva");
         fs::create_dir_all(&dir)?;
         Ok(dir)

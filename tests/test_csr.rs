@@ -27,3 +27,13 @@ fn test_csr_generation() {
     assert!(pem_str.starts_with("-----BEGIN CERTIFICATE REQUEST-----"));
     assert!(pem_str.contains("-----END CERTIFICATE REQUEST-----"));
 }
+
+#[test]
+fn test_cert_time() {
+    let now_ts = 1700000000i64;
+    let now = openssl::asn1::Asn1Time::from_unix(now_ts).unwrap();
+    let past = openssl::asn1::Asn1Time::from_unix(now_ts - 3600).unwrap();
+    let future = openssl::asn1::Asn1Time::from_unix(now_ts + 3600).unwrap();
+    assert!(past.as_ref() < now.as_ref());
+    assert!(now.as_ref() < future.as_ref());
+}

@@ -271,6 +271,7 @@ fn extract_ipa_preserving_symlinks(
     dest: &std::path::Path,
 ) -> Result<()> {
     use std::io::copy;
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
     for i in 0..archive.len() {
@@ -303,13 +304,23 @@ fn extract_ipa_preserving_symlinks(
                 let _ = fs::remove_file(&out_path);
             }
 
-            std::os::unix::fs::symlink(target, &out_path)
-                .with_context(|| format!("Tao symlink that bai: {}", out_path.display()))?;
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink(target, &out_path)
+                    .with_context(|| format!("Tao symlink that bai: {}", out_path.display()))?;
+            }
+            #[cfg(windows)]
+            {
+                let _ = std::os::windows::fs::symlink_file(target, &out_path);
+            }
         } else {
             let mut out = File::create(&out_path)?;
             copy(&mut entry, &mut out)?;
 
-            fs::set_permissions(&out_path, fs::Permissions::from_mode(mode & 0o777))?;
+            #[cfg(unix)]
+            {
+                fs::set_permissions(&out_path, fs::Permissions::from_mode(mode & 0o777))?;
+            }
         }
     }
 

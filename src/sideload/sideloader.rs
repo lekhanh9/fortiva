@@ -313,6 +313,7 @@ impl Sideloader {
             &profile_data,
             &extension_profiles,   // Vec<(String, Vec<u8>)> đã sẵn
             &special,
+            group_identifier.as_deref(),
         )?;
 
         let signed_path = app.bundle.bundle_dir.clone();

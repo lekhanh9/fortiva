@@ -43,5 +43,5 @@ pub fn fix_client_info(ci: &str) -> String {
         }
     }
     result.push_str(rest);
-    result.replace("com.apple.dt.Xpubcode", "com.apple.akd")
+    result.replace("com.apple.dt.Xcode", "com.apple.akd")
 }

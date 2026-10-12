@@ -57,7 +57,7 @@ fn shellexpand(s: &str) -> String {
 
 fn prompt_choice() -> String {
     menu::print_menu();
-    print!("  {} Chọn (1-9 hoặc 0): ", theme::bold_primary("?"));
+    print!("  {} Chọn (1-8 hoặc 0): ", theme::bold_primary("?"));
     io::stdout().flush().ok();
     let mut buf = Vec::new();
     io::stdin().lock().read_until(b'\n', &mut buf).ok();
@@ -113,27 +113,44 @@ fn get_iphone_status() -> String {
 
 use fortiva::dev::{is_session_expired, print_session_expired_help};
 
-/// Lay session, check tuoi. Neu cu → bao login lai.
+/// Lấy session, nếu chưa login hoặc hết hạn thì hỏi đăng nhập luôn (kiểu iLoader)
+fn ensure_or_prompt_session() -> Result<Session> {
+    match Session::load()? {
+        Some(s) if !s.is_expired() && !s.needs_refresh() => Ok(s),
+        Some(s) => {
+            if s.is_expired() {
+                log::warn("Session Apple ID đã hết hạn (quá 7 ngày). Cần đăng nhập lại.");
+            } else if s.needs_refresh() {
+                log::warn(&format!("Token Apple đã cũ ({} phút). Vui lòng đăng nhập lại.", s.token_age_min()));
+            }
+            if prompt_yn("Đăng nhập lại Apple ID ngay bây giờ? (y/n):") {
+                cmd_login_apple_id()?;
+                Session::load()?
+                    .filter(|sess| !sess.is_expired())
+                    .ok_or_else(|| anyhow!("Đăng nhập chưa hoàn tất"))
+            } else {
+                Err(anyhow!("Cần đăng nhập để tiếp tục"))
+            }
+        }
+        None => {
+            log::warn("Chưa đăng nhập tài khoản Apple ID.");
+            if prompt_yn("Đăng nhập Apple ID ngay bây giờ? (y/n):") {
+                cmd_login_apple_id()?;
+                Session::load()?
+                    .ok_or_else(|| anyhow!("Đăng nhập chưa hoàn tất"))
+            } else {
+                Err(anyhow!("Chưa đăng nhập"))
+            }
+        }
+    }
+}
+
 fn ensure_session() -> Result<Session> {
-    let session = Session::load()?
-        .ok_or_else(|| anyhow!("Chua login. Chay menu 1 de login"))?;
-
-    if session.is_expired() {
-        log::warn("Session het han (qua 7 ngay)");
-        print_session_expired_help();
-        return Err(anyhow!("Session expired"));
-    }
-
-    if session.needs_refresh() {
-        log::warn(&format!("Token cu ({} phut)", session.token_age_min()));
-        print_session_expired_help();
-        return Err(anyhow!("Token can refresh"));
-    }
-
-    Ok(session)
+    ensure_or_prompt_session()
 }
 
 /// Wrapper: chay command + xu ly session expired.
+#[allow(dead_code)]
 fn with_session<T, F>(f: F) -> Result<T>
 where
     F: FnOnce(&Session) -> Result<T>,
@@ -287,10 +304,28 @@ fn cmd_login_apple_id() -> Result<()> {
                     match session.save() {
                         Ok(()) => {
                             log::success(&format!("✓ Đã lưu session cho {}", apple_id));
-                            log::info(&format!("  Hết hạn sau: 7 ngày"));
+                            log::info("  Hết hạn sau: 7 ngày");
                         }
                         Err(e) => {
                             log::warn(&format!("⚠️  Không lưu được session: {}", e));
+                        }
+                    }
+
+                    // Tự động kiểm tra và chuẩn bị Developer Certificate (kiểu iLoader)
+                    if let (Some(token), Some(ref tid)) = (result.session_token.clone(), &session.team_id) {
+                        println!();
+                        log::info("Đang kiểm tra và chuẩn bị Developer Certificate...");
+                        if let Ok(mut dev) = fortiva::dev::DeveloperClient::new(dsid.clone(), token) {
+                            dev.set_team(tid.clone());
+                            let mut ani = AnisetteClient::new(None);
+                            match dev.ensure_certificate(&mut ani, "fortiva", &apple_id, tid) {
+                                Ok(bundle) => {
+                                    log::success(&format!("✓ Chứng chỉ sẵn sàng (ID: {})", bundle.certificate_id.as_deref().unwrap_or("OK")));
+                                }
+                                Err(e) => {
+                                    log::warn(&format!("⚠️ Không tự động tải được cert: {:#}", e));
+                                }
+                            }
                         }
                     }
                 } else {
@@ -315,19 +350,20 @@ fn cmd_login_apple_id() -> Result<()> {
 
 fn cmd_test_anisette() -> Result<()> {
     theme::clear_screen();
-    log::header("TEST ANISETTE SERVER");
+    log::header("CẤU HÌNH ANISETTE SERVER");
 
-    let url = prompt_text("Anisette URL (Enter = mặc định):");
-    let url_opt = if url.is_empty() { None } else { Some(url.as_str()) };
+    println!("  {} Server hiện tại: {}\n", theme::primary("→"), fortiva::config::Config::anisette_url());
+    let url = prompt_text("Nhập Anisette URL mới (Enter = kiểm tra server hiện tại):");
+    let test_url = if url.is_empty() { None } else { Some(url.as_str()) };
 
     println!();
-    let sp = spinner::new("Đang fetch headers...");
-    let mut client = AnisetteClient::new(url_opt);
+    let sp = spinner::new("Đang kiểm tra kết nối tới Anisette server...");
+    let mut client = AnisetteClient::new(test_url);
 
     match client.fetch(true) {
         Ok(headers) => {
             sp.finish_and_clear();
-            log::success(&format!("Nhận được {} headers", headers.len()));
+            log::success(&format!("Nhận được {} headers thành công!", headers.len()));
             println!();
 
             let important = [
@@ -347,6 +383,11 @@ fn cmd_test_anisette() -> Result<()> {
                 }
             }
             theme::box_section("Anisette Headers", &lines);
+
+            if !url.is_empty() && prompt_yn("Lưu URL này làm server mặc định? (y/n):") {
+                fortiva::config::Config::set_anisette_url(&url)?;
+                log::success("✓ Đã lưu Anisette URL vào config thành công!");
+            }
         }
         Err(e) => {
             sp.finish_and_clear();
@@ -367,6 +408,7 @@ fn cmd_test_anisette() -> Result<()> {
 //  SIGN HELPERS
 // ============================================================
 
+#[allow(dead_code)]
 struct SignInputs {
     ipa: PathBuf,
     cert: PathBuf,
@@ -374,6 +416,7 @@ struct SignInputs {
     profile: PathBuf,
 }
 
+#[allow(dead_code)]
 fn collect_sign_inputs() -> Result<SignInputs> {
     let ipa_path = prompt_text("Đường dẫn IPA:");
     if ipa_path.is_empty() {
@@ -405,6 +448,7 @@ fn collect_sign_inputs() -> Result<SignInputs> {
     Ok(SignInputs { ipa, cert, key, profile })
 }
 
+#[allow(dead_code)]
 fn sign_with_progress(
     inputs: &SignInputs,
     label: &str,
@@ -482,6 +526,7 @@ fn sign_with_progress(
 //  FEATURE 4: SIGN IPA
 // ============================================================
 
+#[allow(dead_code)]
 fn cmd_sign_ipa() -> Result<()> {
     theme::clear_screen();
     log::header("SIGN IPA (CHỈ KÝ)");
@@ -506,6 +551,7 @@ fn cmd_sign_ipa() -> Result<()> {
 //  FEATURE 5: SIGN + AUTO INSTALL
 // ============================================================
 
+#[allow(dead_code)]
 fn cmd_sign_and_install() -> Result<()> {
     theme::clear_screen();
     log::header("SIGN + AUTO INSTALL");
@@ -920,21 +966,18 @@ fn cmd_sign_auto() -> Result<()> {
         Ok(path) => path,
         Err(e) if fortiva::auth::error::is_session_expired_error(&e) => {
             println!();
-            println!("╔══════════════════════════════════════════════════════════╗");
-            println!("║  ⚠️  SESSION APPLE ĐÃ HẾT HẠN                            ║");
-            println!("║  Vui lòng login lại để tiếp tục                          ║");
-            println!("╚══════════════════════════════════════════════════════════╝");
-            println!();
-
-            // Xóa session cũ
+            log::warn("Session Apple ID đã hết hạn.");
             let _ = fortiva::session::Session::clear();
-            log::info("Đã xóa session cũ");
-            println!();
-            println!("  » Chạy menu 1 (Login Apple ID) để login lại");
-            println!();
-
-            pause();
-            return Ok(());
+            if prompt_yn("Đăng nhập lại Apple ID ngay bây giờ? (y/n):") {
+                cmd_login_apple_id()?;
+                if let Ok(Some(new_session)) = fortiva::session::Session::load() {
+                    fortiva::sideload::auto::sign_ipa_auto(&ipa_path, &new_session)?
+                } else {
+                    return Err(anyhow!("Đăng nhập lại chưa hoàn tất"));
+                }
+            } else {
+                return Ok(());
+            }
         }
         Err(e) => return Err(e),
     };

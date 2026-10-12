@@ -16,6 +16,7 @@ pub fn sign_app(
     profile_data: &[u8],
     ext_profiles: &[(String, Vec<u8>)],
     _special: &Option<SpecialApp>,
+    app_group: Option<&str>,
 ) -> Result<()> {
     println!("[sign] === sign_app (apple-codesign) ===");
 
@@ -82,31 +83,7 @@ pub fn sign_app(
     // ─────────────────────────────────────────────
     // 3. Entitlements cho MAIN + EXTENSIONS
     // ─────────────────────────────────────────────
-    let mut main_ent_xml = extract_entitlements_xml_string(profile_data)?;
-
-    // ⭐ Chỉ inject App Group cho special apps
-    let app_group_value: Option<&str> = match _special {
-        Some(SpecialApp::SideStore) | Some(SpecialApp::SideStoreLc) => {
-            Some("group.com.SideStore.SideStore")
-        }
-        Some(SpecialApp::AltStore) => Some("group.com.AltStore.AltStore"),
-        Some(SpecialApp::LiveContainer) => Some("group.com.LiveContainer.LiveContainer"),
-        Some(SpecialApp::StikStore) => None,   // StikStore không cần App Group
-        None => None,
-    };
-
-    if let Some(group) = app_group_value {
-        if !main_ent_xml.contains("application-groups") {
-            let inject = format!(
-                "<key>com.apple.security.application-groups</key>\
-<array><string>{}</string></array>",
-                group
-            );
-            main_ent_xml = main_ent_xml.replace("</dict>", &format!("{}</dict>", inject));
-            println!("[sign] Injected App Group (main): {}", group);
-        }
-    }
-
+    let main_ent_xml = extract_entitlements_xml_string(profile_data, app_group)?;
     settings.set_entitlements_xml(SettingsScope::Main, main_ent_xml)?;
     println!("[sign] Main entitlements set");
 
@@ -119,20 +96,7 @@ pub fn sign_app(
             .find(|(id, _)| id == &ext_id)
             .map(|(_, p)| p.as_slice());
         if let Some(ext_prof) = ext_profile {
-            let mut ext_ent_xml = extract_entitlements_xml_string(ext_prof)?;
-
-            // ⭐ Extension phải có CÙNG App Group với main
-            if let Some(group) = app_group_value {
-                if !ext_ent_xml.contains("application-groups") {
-                    let inject = format!(
-                        "<key>com.apple.security.application-groups</key>\
-<array><string>{}</string></array>",
-                        group
-                    );
-                    ext_ent_xml = ext_ent_xml.replace("</dict>", &format!("{}</dict>", inject));
-                    println!("[sign] Injected App Group (ext): {}", group);
-                }
-            }
+            let ext_ent_xml = extract_entitlements_xml_string(ext_prof, app_group)?;
             let rel_path = ext.bundle_dir
                 .strip_prefix(&bundle_dir)
                 .map(|p| p.to_string_lossy().replace('\\', "/"))
@@ -183,7 +147,7 @@ fn load_certificate(pem: &str) -> Result<CapturedX509Certificate> {
 }
 
 /// Extract entitlements XML từ profile.
-fn extract_entitlements_xml_string(profile_data: &[u8]) -> Result<String> {
+fn extract_entitlements_xml_string(profile_data: &[u8], app_group: Option<&str>) -> Result<String> {
     use plist::Value;
 
     let start = find_subsequence(profile_data, b"<plist");
@@ -197,15 +161,30 @@ fn extract_entitlements_xml_string(profile_data: &[u8]) -> Result<String> {
     let plist: Value = plist::from_bytes(&profile_data[start..end])
         .context("Parse profile plist fail")?;
 
-    let entitlements = plist
+    let mut entitlements = plist
         .as_dictionary()
         .ok_or_else(|| anyhow!("Profile plist không phải dict"))?
         .get("Entitlements")
         .and_then(|v| v.as_dictionary())
-        .ok_or_else(|| anyhow!("Profile thiếu Entitlements"))?;
+        .ok_or_else(|| anyhow!("Profile thiếu Entitlements"))?
+        .clone();
+
+    if let Some(group) = app_group {
+        let key = "com.apple.security.application-groups";
+        if !entitlements.contains_key(key) {
+            entitlements.insert(key.to_string(), Value::Array(Vec::new()));
+        }
+        if let Some(Value::Array(arr)) = entitlements.get_mut(key) {
+            let val = Value::String(group.to_string());
+            if !arr.contains(&val) {
+                arr.push(val);
+                println!("[sign] Injected App Group: {}", group);
+            }
+        }
+    }
 
     let mut buf = Vec::new();
-    plist::to_writer_xml(&mut buf, &Value::Dictionary(entitlements.clone()))
+    plist::to_writer_xml(&mut buf, &Value::Dictionary(entitlements))
         .context("Serialize entitlements XML fail")?;
 
     String::from_utf8(buf).context("Entitlements XML không phải UTF-8")

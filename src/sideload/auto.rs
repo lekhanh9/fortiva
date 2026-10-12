@@ -41,11 +41,9 @@ pub fn sign_ipa_auto(
     println!("[1/8] Team: {}", team_id);
 
     // 3. Ensure certificate
-    // ⭐ Load session
-    let session = crate::session::Session::load()?.ok_or_else(|| anyhow::anyhow!("Chưa login"))?;
     let apple_id = session.apple_id.clone();
-    let team_id = session.team_id.clone().unwrap_or_default();
-    let cert_bundle = dev.ensure_certificate(&mut anisette, "fortiva", &apple_id, &team_id)?;
+    let team_id_opt = session.team_id.clone().unwrap_or_default();
+    let cert_bundle = dev.ensure_certificate(&mut anisette, "fortiva", &apple_id, &team_id_opt)?;
     let cert = CertificateIdentity::from_bundle(&cert_bundle)?;
     println!("[2/8] Cert: {}", cert.serial_number());
 
@@ -81,10 +79,11 @@ pub fn sign_ipa_auto(
     }
 
     // ════════════════════════════════════════════════════════════
-    // BƯỚC 5.5: App Group (chỉ special app)
+    // BƯỚC 5.5: App Group & Special behavior (chỉ special app)
     // ════════════════════════════════════════════════════════════
-    let special_app = app.get_special_app();
-    if let Some(ref sp) = special_app {
+    let special = app.get_special_app();
+    let mut app_group_str: Option<String> = None;
+    if let Some(ref sp) = special {
         let app_group_value = match sp {
             SpecialApp::SideStore | SpecialApp::SideStoreLc => {
                 Some(format!("group.{}", new_id))
@@ -112,8 +111,8 @@ pub fn sign_ipa_auto(
                         }
                     }
 
-                    println!("     Cho Apple update (3s)...");
-                    std::thread::sleep(std::time::Duration::from_secs(3));
+                    println!("     Cho Apple update (2s)...");
+                    std::thread::sleep(std::time::Duration::from_secs(2));
 
                     match dev.assign_app_group(&mut anisette, &main_app_id, &group) {
                         Ok(_) => println!("     Assigned to main"),
@@ -127,10 +126,14 @@ pub fn sign_ipa_auto(
                         }
                     }
 
-                    println!("     Cho Apple update (3s)...");
-                    std::thread::sleep(std::time::Duration::from_secs(3));
+                    app_group_str = Some(group_id.clone());
                 }
                 Err(e) => println!("     App Group register fail: {}", e),
+            }
+
+            // Inject special behavior (ALTCertificate.p12, ALTCertificateID cho SideStore)
+            if let Err(e) = app.apply_special_app_behavior(&special, &group_id, &cert) {
+                println!("     Apply special app behavior fail: {}", e);
             }
         }
     }
@@ -166,20 +169,18 @@ pub fn sign_ipa_auto(
     }
 
     // 10. Sign bundle tree (multi-profile: main + từng ext)
-    let special = app.get_special_app();
-    
-    // Collect ext_profiles thành Vec<(String, Vec<u8>)> cho zsign-rs
     let ext_profiles_vec: Vec<(String, Vec<u8>)> = ext_profiles
         .iter()
         .map(|(id, p)| (id.clone(), p.encoded_profile.clone()))
         .collect();
-    
+
     sign_app(
         &mut app,
         &cert,
         &main_profile.encoded_profile,
         &ext_profiles_vec,
         &special,
+        app_group_str.as_deref(),
     )?;
     println!("[8/8] Sign OK");
 

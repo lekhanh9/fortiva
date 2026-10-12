@@ -6,7 +6,6 @@ use std::fs;
 use std::path::PathBuf;
 
 use idevice::lockdown::LockdownClient;
-use idevice::pairing_file::PairingFile;
 use idevice::provider::IdeviceProvider;
 use idevice::services::afc::{AfcClient, opcode::AfcFopenMode};
 use idevice::services::house_arrest::HouseArrestClient;

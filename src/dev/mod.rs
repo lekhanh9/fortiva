@@ -13,7 +13,7 @@ mod plist_api;
 
 pub use app_groups::AppGroup;
 pub use app_ids::{AppId, Profile};
-pub use certificate::{decode_cert_content, CertificateBundle};
+pub use certificate::{cert_matches_account, clear_all_certs, decode_cert_content, CertificateBundle};
 pub use client::{
     DevError, DeveloperClient, BASE_URL_QH65B2, BASE_URL_V1, CLIENT_ID, PROTOCOL_VERSION,
     XCODE_VERSION,

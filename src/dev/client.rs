@@ -168,15 +168,7 @@ impl DeveloperClient {
 
                     let status = r.status();
                     let bytes = r.bytes()?;
-                    eprintln!("[DBG-TEAMS] status: {}", status);
-                    eprintln!("[DBG-TEAMS] body len: {}", bytes.len());
-                    eprintln!("[DBG-TEAMS] first 100 bytes: {:?}",
-                        String::from_utf8_lossy(&bytes[..bytes.len().min(100)]));
-                    let plist_val: Value = plist::from_bytes(&bytes)
-                        .map_err(|e| {
-                            eprintln!("[DBG-TEAMS] parse plist fail: {}", e);
-                            e
-                        })?;
+                    let plist_val: Value = plist::from_bytes(&bytes)?;
                     let dict = plist_val
                         .as_dictionary()
                         .ok_or_else(|| anyhow!("Response khong phai dict"))?

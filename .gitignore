@@ -1,6 +1,9 @@
 # Rust
 /target
 **/*.rs.bk
+*.bak
+*.bak*
+**/*.bak*
 
 # Build artifacts
 *.o

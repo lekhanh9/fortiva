@@ -49,8 +49,15 @@ pub fn handle_max_certs(
             ));
         }
         MaxCertsBehavior::AutoRevokeOldest => {
-            if let Some(oldest) = certs.first() {
-                let id = oldest
+            let oldest = certs.iter().min_by_key(|c| {
+                c.get("attributes")
+                    .and_then(|a| a.get("expirationDate"))
+                    .and_then(|e| e.as_str())
+                    .unwrap_or("9999-99-99")
+            }).or_else(|| certs.first());
+
+            if let Some(oldest_cert) = oldest {
+                let id = oldest_cert
                     .get("id")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Cert thieu id"))?;

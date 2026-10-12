@@ -18,6 +18,6 @@ pub use auth::AuthResult;
 pub use auth::Fortiva;
 pub use dev::DeveloperClient;
 pub use sideload::sideloader::Sideloader;
-pub use install::*; // nếu fail thì khánh ăn cứt
+pub use install::*;
 // Alias cho crate::install
 pub use install as install_mod;

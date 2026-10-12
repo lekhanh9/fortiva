@@ -1,6 +1,5 @@
 // tests/test_client_mock.rs
 use fortiva::dev::DeveloperClient;
-use mockito::Server;
 
 #[test]
 fn test_client_creation() {

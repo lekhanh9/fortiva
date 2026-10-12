@@ -170,12 +170,19 @@ pub fn install_app_full(
         .map(|(id, p)| (id.clone(), p.encoded_profile.clone()))
         .collect();
     
+    let app_group = if special.is_some() {
+        Some(format!("group.{}", new_id))
+    } else {
+        None
+    };
+
     sign_app(
         &mut app,
         &cert,
         &main_profile.encoded_profile,
         &ext_profiles_vec,
         &special,
+        app_group.as_deref(),
     )?;
 
     // 11. Repack

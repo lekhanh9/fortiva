@@ -126,8 +126,15 @@ pub fn decode_cert_content(b64: &str) -> Result<Vec<u8>> {
 // ============================================================
 
 impl DeveloperClient {
-    /// Đảm bảo có cert. Nếu cert cũ khác account/team hiện tại → báo lỗi,
-    /// KHÔNG tự động xóa (để user quyết định quay lại nick cũ hay xóa .fortiva).
+    /// Đảm bảo có cert hợp lệ:
+    /// 1. Kiểm tra cert lưu cục bộ:
+    ///    - Nếu cert cũ thuộc account/team khác -> tự động dọn sạch.
+    ///    - Nếu cert cũ thuộc đúng account/team -> kiểm tra xem có còn active trên Apple Developer không.
+    ///    - Nếu cert bị thu hồi / hết hạn trên Apple -> tự động xóa cert vô hiệu hóa.
+    ///    - Nếu cert còn hợp lệ -> tái sử dụng luôn.
+    /// 2. Nếu cần tạo mới:
+    ///    - Kiểm tra số lượng cert hiện có trên Apple. Nếu >= 3 (giới hạn free account) -> tự động revoke cert cũ nhất.
+    ///    - Tạo cert mới, lưu vào ~/.fortiva/certs/, trả về bundle.
     pub fn ensure_certificate(
         &mut self,
         auth: &mut AnisetteClient,
@@ -138,49 +145,75 @@ impl DeveloperClient {
         let certs_dir = crate::session::Session::dir()?.join("certs");
         std::fs::create_dir_all(&certs_dir)?;
 
-        // Có cert cũ?
+        // Lấy danh sách certs active trên Apple Developer
+        let remote_certs = self.list_certificates(auth).unwrap_or_default();
+
+        // Kiểm tra cert đã lưu cục bộ
         if let Some(cert) = CertificateBundle::load_latest(&certs_dir)? {
             let has_meta = !cert.apple_id.is_empty() && !cert.team_id.is_empty();
 
-            if has_meta && cert.apple_id == apple_id && cert.team_id == team_id {
-                // Match hoàn toàn → dùng luôn
-                println!("[cert] Dùng cert cũ (đúng account/team)");
-                return Ok(cert);
-            }
-
-            // Mismatch HOẶC cert cũ thiếu metadata → báo lỗi
-            println!();
-            println!("╔══════════════════════════════════════════════════════════╗");
-            println!("║  ⚠️  CERT CŨ KHÔNG KHỚP VỚI TÀI KHOẢN HIỆN TẠI          ║");
-            println!("╚══════════════════════════════════════════════════════════╝");
-            println!();
-            if has_meta {
-                println!("  Cert cũ:      {} / {}", cert.apple_id, cert.team_id);
+            if !has_meta || cert.apple_id != apple_id || cert.team_id != team_id {
+                println!("[cert] ⚠️ Cert lưu trên máy thuộc tài khoản khác hoặc thiếu metadata. Tự động dọn sạch cert cũ...");
+                let _ = clear_all_certs();
+            } else if cert.is_expired() {
+                println!("[cert] ⚠️ Cert lưu trên máy (ID: {:?}) đã hết hạn. Tự động xoá...", cert.certificate_id);
+                let _ = clear_all_certs();
             } else {
-                println!("  Cert cũ:      (thiếu metadata — tạo bởi phiên bản cũ)");
-            }
-            println!("  Session mới:  {} / {}", apple_id, team_id);
-            println!();
-            println!("  Có 2 cách xử lý:");
-            println!("    1. Quay lại nick cũ ({})", if has_meta { cert.apple_id.as_str() } else { "?" });
-            println!("    2. Xóa file cert để tạo mới cho nick hiện tại:");
-            println!("       rm -rf ~/.fortiva/certs/");
-            println!();
-            println!("  Nếu chọn (2), chạy lại tool để tạo cert mới.");
-            println!();
+                // Kiểm tra cert này có còn tồn tại trên Apple không
+                let mut is_active = false;
+                if let Some(cid) = &cert.certificate_id {
+                    for rc in &remote_certs {
+                        if rc.get("id").and_then(|v| v.as_str()) == Some(cid) {
+                            if let Some(exp_str) = rc
+                                .get("attributes")
+                                .and_then(|a| a.get("expirationDate"))
+                                .and_then(|e| e.as_str())
+                            {
+                                if let Ok(exp_time) = chrono::DateTime::parse_from_rfc3339(exp_str) {
+                                    if exp_time < chrono::Utc::now() {
+                                        println!("[cert] ⚠️ Cert ID {} đã hết hạn trên Apple vào {}", cid, exp_str);
+                                        break;
+                                    }
+                                }
+                            }
+                            is_active = true;
+                            break;
+                        }
+                    }
+                }
 
-            anyhow::bail!(
-                "Cert mismatch. Quay lại nick cũ hoặc xóa ~/.fortiva/certs/"
+                if is_active && cert.cert_content_b64.is_some() {
+                    println!("[cert] ✅ Tái sử dụng cert đã lưu: ID {:?} (hợp lệ trên Apple Developer)", cert.certificate_id.as_deref().unwrap_or("?"));
+                    return Ok(cert);
+                } else {
+                    println!("[cert] ⚠️ Cert lưu trên máy (ID: {:?}) đã hết hạn hoặc bị vô hiệu hoá trên Apple. Tự động xoá...", cert.certificate_id);
+                    let _ = clear_all_certs();
+                }
+            }
+        }
+
+        // Tự động giải phóng nếu đã đạt giới hạn 3 certs của Free Developer Account
+        if remote_certs.len() >= 3 {
+            println!(
+                "[cert] ⚠️ Đã đạt giới hạn chứng chỉ Apple ({}/3). Tự động thu hồi chứng chỉ cũ nhất...",
+                remote_certs.len()
+            );
+            let _ = super::max_certs::handle_max_certs(
+                self,
+                auth,
+                &remote_certs,
+                &super::max_certs::MaxCertsBehavior::AutoRevokeOldest,
             );
         }
 
-        // Không có cert cũ → tạo mới
-        println!("[cert] Chưa có cert → tạo mới cho {} / {}", apple_id, team_id);
+        // Tạo cert mới
+        println!("[cert] 🔑 Đang tạo chứng chỉ mới cho {} / {}...", apple_id, team_id);
         let bundle = self
             .create_certificate(auth, machine_name, apple_id, team_id)?
-            .ok_or_else(|| anyhow!("create_certificate returned None"))?;
+            .ok_or_else(|| anyhow!("Tạo chứng chỉ thất bại (Apple không trả về certRequest)"))?;
 
         bundle.save_to_disk(&certs_dir)?;
+        println!("[cert] ✅ Đã lưu chứng chỉ mới vào {}", certs_dir.display());
         Ok(bundle)
     }
 }
@@ -308,5 +341,26 @@ impl CertificateBundle {
             return Self::load_from_id(dir, &id);
         }
         Ok(None)
+    }
+
+    pub fn is_expired(&self) -> bool {
+        if let Some(ref content) = self.cert_content_b64 {
+            let cert_res = if content.contains("-----BEGIN CERTIFICATE-----") {
+                openssl::x509::X509::from_pem(content.as_bytes())
+            } else if let Ok(der) = general_purpose::STANDARD.decode(content) {
+                openssl::x509::X509::from_der(&der)
+            } else {
+                return true;
+            };
+
+            if let Ok(cert) = cert_res {
+                if let Ok(now) = openssl::asn1::Asn1Time::from_unix(crate::session::now() as i64) {
+                    if cert.not_after() < now.as_ref() {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
     }
 }

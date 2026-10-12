@@ -71,11 +71,13 @@ jobs:
           key: ${{ matrix.target }}
 
       # Cài đặt UPX
-      - name: Setup UPX
-        if: matrix.use_upx == true
-        uses: taiki-e/install-action@v2
-        with:
-          tool: upx
+      - name: Setup UPX (Linux)
+        if: matrix.use_upx == true && runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y upx
+
+      - name: Setup UPX (Windows)
+        if: matrix.use_upx == true && runner.os == 'Windows'
+        run: choco install upx --no-progress
 
       # Cài đặt cross
       - name: Setup cross
