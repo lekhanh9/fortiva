@@ -49,22 +49,37 @@ pub fn handle_max_certs(
             ));
         }
         MaxCertsBehavior::AutoRevokeOldest => {
-            let oldest = certs.iter().min_by_key(|c| {
+            let mut candidates: Vec<&serde_json::Value> = certs.iter().collect();
+            candidates.sort_by_key(|c| {
                 c.get("attributes")
                     .and_then(|a| a.get("expirationDate"))
                     .and_then(|e| e.as_str())
-                    .unwrap_or("9999-99-99")
-            }).or_else(|| certs.first());
+                    .and_then(super::certificate::parse_expiration_date)
+                    .map(|dt| dt.timestamp())
+                    .unwrap_or(i64::MAX)
+            });
 
-            if let Some(oldest_cert) = oldest {
-                let id = oldest_cert
-                    .get("id")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Cert thieu id"))?;
+            let mut revoked = false;
+            for candidate in candidates {
+                if let Some(id) = candidate.get("id").and_then(|v| v.as_str()) {
+                    let exp_display = candidate
+                        .get("attributes")
+                        .and_then(|a| a.get("expirationDate"))
+                        .and_then(|e| e.as_str())
+                        .unwrap_or("unknown");
+                    println!("[max_certs] Thu hồi cert cũ nhất: {} (hạn: {})", id, exp_display);
+                    if dev.revoke_certificate(auth, id)? {
+                        println!("[max_certs] ✅ Thu hồi thành công cert: {}", id);
+                        revoked = true;
+                        break;
+                    } else {
+                        eprintln!("[max_certs] ⚠️ Không thu hồi được cert {}, thử cert tiếp theo...", id);
+                    }
+                }
+            }
 
-                println!("[max_certs] Revoke cert cu nhat: {}", id);
-                dev.revoke_certificate(auth, id)?;
-                println!("[max_certs] Revoked OK");
+            if !revoked {
+                return Err(anyhow!("Không thể thu hồi bất kỳ chứng chỉ nào trên Apple Developer"));
             }
         }
         MaxCertsBehavior::RevokeAll => {

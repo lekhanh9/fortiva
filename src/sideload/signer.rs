@@ -147,7 +147,7 @@ fn load_certificate(pem: &str) -> Result<CapturedX509Certificate> {
 }
 
 /// Extract entitlements XML từ profile.
-fn extract_entitlements_xml_string(profile_data: &[u8], app_group: Option<&str>) -> Result<String> {
+pub fn extract_entitlements_xml_string(profile_data: &[u8], app_group: Option<&str>) -> Result<String> {
     use plist::Value;
 
     let start = find_subsequence(profile_data, b"<plist");
@@ -171,7 +171,8 @@ fn extract_entitlements_xml_string(profile_data: &[u8], app_group: Option<&str>)
 
     if let Some(group) = app_group {
         let key = "com.apple.security.application-groups";
-        if !entitlements.contains_key(key) {
+        let is_array = matches!(entitlements.get(key), Some(Value::Array(_)));
+        if !is_array {
             entitlements.insert(key.to_string(), Value::Array(Vec::new()));
         }
         if let Some(Value::Array(arr)) = entitlements.get_mut(key) {

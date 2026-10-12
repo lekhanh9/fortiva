@@ -146,7 +146,7 @@ impl DeveloperClient {
         std::fs::create_dir_all(&certs_dir)?;
 
         // Lấy danh sách certs active trên Apple Developer
-        let remote_certs = self.list_certificates(auth).unwrap_or_default();
+        let remote_certs_result = self.list_certificates(auth);
 
         // Kiểm tra cert đã lưu cục bộ
         if let Some(cert) = CertificateBundle::load_latest(&certs_dir)? {
@@ -155,42 +155,55 @@ impl DeveloperClient {
             if !has_meta || cert.apple_id != apple_id || cert.team_id != team_id {
                 println!("[cert] ⚠️ Cert lưu trên máy thuộc tài khoản khác hoặc thiếu metadata. Tự động dọn sạch cert cũ...");
                 let _ = clear_all_certs();
-            } else if cert.is_expired() {
-                println!("[cert] ⚠️ Cert lưu trên máy (ID: {:?}) đã hết hạn. Tự động xoá...", cert.certificate_id);
+            } else if cert.cert_content_b64.is_none() || cert.is_expired() {
+                println!("[cert] ⚠️ Cert lưu trên máy (ID: {:?}) đã hết hạn hoặc không có dữ liệu chứng chỉ. Tự động xoá...", cert.certificate_id);
                 let _ = clear_all_certs();
             } else {
-                // Kiểm tra cert này có còn tồn tại trên Apple không
-                let mut is_active = false;
-                if let Some(cid) = &cert.certificate_id {
-                    for rc in &remote_certs {
-                        if rc.get("id").and_then(|v| v.as_str()) == Some(cid) {
-                            if let Some(exp_str) = rc
-                                .get("attributes")
-                                .and_then(|a| a.get("expirationDate"))
-                                .and_then(|e| e.as_str())
-                            {
-                                if let Ok(exp_time) = chrono::DateTime::parse_from_rfc3339(exp_str) {
-                                    if exp_time < chrono::Utc::now() {
-                                        println!("[cert] ⚠️ Cert ID {} đã hết hạn trên Apple vào {}", cid, exp_str);
-                                        break;
+                // Cert cục bộ còn hiệu lực. Kiểm tra trạng thái trên Apple Developer nếu kết nối được.
+                match &remote_certs_result {
+                    Ok(remote_certs) => {
+                        let mut is_active = false;
+                        if let Some(cid) = &cert.certificate_id {
+                            for rc in remote_certs {
+                                if rc.get("id").and_then(|v| v.as_str()) == Some(cid) {
+                                    if let Some(exp_str) = rc
+                                        .get("attributes")
+                                        .and_then(|a| a.get("expirationDate"))
+                                        .and_then(|e| e.as_str())
+                                    {
+                                        if let Some(exp_time) = parse_expiration_date(exp_str) {
+                                            if exp_time < chrono::Utc::now() {
+                                                println!("[cert] ⚠️ Cert ID {} đã hết hạn trên Apple vào {}", cid, exp_str);
+                                                break;
+                                            }
+                                        }
                                     }
+                                    is_active = true;
+                                    break;
                                 }
                             }
-                            is_active = true;
-                            break;
+                        }
+
+                        if is_active {
+                            println!("[cert] ✅ Tái sử dụng cert đã lưu: ID {:?} (hợp lệ trên Apple Developer)", cert.certificate_id.as_deref().unwrap_or("?"));
+                            return Ok(cert);
+                        } else {
+                            println!("[cert] ⚠️ Cert lưu trên máy (ID: {:?}) đã bị thu hồi hoặc hết hạn trên Apple. Tự động xoá...", cert.certificate_id);
+                            let _ = clear_all_certs();
                         }
                     }
-                }
-
-                if is_active && cert.cert_content_b64.is_some() {
-                    println!("[cert] ✅ Tái sử dụng cert đã lưu: ID {:?} (hợp lệ trên Apple Developer)", cert.certificate_id.as_deref().unwrap_or("?"));
-                    return Ok(cert);
-                } else {
-                    println!("[cert] ⚠️ Cert lưu trên máy (ID: {:?}) đã hết hạn hoặc bị vô hiệu hoá trên Apple. Tự động xoá...", cert.certificate_id);
-                    let _ = clear_all_certs();
+                    Err(e) => {
+                        println!("[cert] ⚠️ Không thể kết nối Apple Developer API để kiểm tra từ xa ({}). Tiếp tục sử dụng cert hợp lệ đã lưu trên máy.", e);
+                        return Ok(cert);
+                    }
                 }
             }
         }
+
+        let remote_certs = match remote_certs_result {
+            Ok(certs) => certs,
+            Err(_) => self.list_certificates(auth).unwrap_or_default(),
+        };
 
         // Tự động giải phóng nếu đã đạt giới hạn 3 certs của Free Developer Account
         if remote_certs.len() >= 3 {
@@ -198,12 +211,12 @@ impl DeveloperClient {
                 "[cert] ⚠️ Đã đạt giới hạn chứng chỉ Apple ({}/3). Tự động thu hồi chứng chỉ cũ nhất...",
                 remote_certs.len()
             );
-            let _ = super::max_certs::handle_max_certs(
+            super::max_certs::handle_max_certs(
                 self,
                 auth,
                 &remote_certs,
                 &super::max_certs::MaxCertsBehavior::AutoRevokeOldest,
-            );
+            )?;
         }
 
         // Tạo cert mới
@@ -344,23 +357,63 @@ impl CertificateBundle {
     }
 
     pub fn is_expired(&self) -> bool {
-        if let Some(ref content) = self.cert_content_b64 {
-            let cert_res = if content.contains("-----BEGIN CERTIFICATE-----") {
-                openssl::x509::X509::from_pem(content.as_bytes())
-            } else if let Ok(der) = general_purpose::STANDARD.decode(content) {
-                openssl::x509::X509::from_der(&der)
-            } else {
-                return true;
-            };
+        let content = match &self.cert_content_b64 {
+            Some(c) if !c.trim().is_empty() => c.trim(),
+            _ => return false,
+        };
 
-            if let Ok(cert) = cert_res {
+        let clean_b64: String = content.chars().filter(|c| !c.is_whitespace()).collect();
+        let cert = if content.contains("-----BEGIN CERTIFICATE-----") {
+            openssl::x509::X509::from_pem(content.as_bytes()).ok()
+        } else if let Ok(der) = general_purpose::STANDARD.decode(&clean_b64) {
+            openssl::x509::X509::from_der(&der).ok()
+        } else {
+            None
+        };
+
+        match cert {
+            Some(cert) => {
                 if let Ok(now) = openssl::asn1::Asn1Time::from_unix(crate::session::now() as i64) {
-                    if cert.not_after() < now.as_ref() {
-                        return true;
-                    }
+                    cert.not_after() < now.as_ref()
+                } else {
+                    false
                 }
             }
+            None => true, // Cert bị lỗi format hoặc hư hỏng coi như hết hạn/vô hiệu
         }
-        false
     }
+}
+
+/// Parse chuỗi ngày hết hạn từ Apple Developer API sang UTC DateTime.
+/// Hỗ trợ RFC3339 chuẩn, ISO 8601 không dấu hai chấm (+0000), naive datetime, và ngày (YYYY-MM-DD).
+pub fn parse_expiration_date(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    // 1. Thử RFC3339 chuẩn: 2024-11-20T12:34:56Z hoặc 2024-11-20T12:34:56.000+00:00
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+        return Some(dt.with_timezone(&chrono::Utc));
+    }
+    // 2. Thử timezone offset không có dấu hai chấm: 2024-11-20T12:34:56.000+0000
+    if let Ok(dt) = chrono::DateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f%z") {
+        return Some(dt.with_timezone(&chrono::Utc));
+    }
+    if let Ok(dt) = chrono::DateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%z") {
+        return Some(dt.with_timezone(&chrono::Utc));
+    }
+    // 3. Thử Naive DateTime (mặc định coi là UTC)
+    if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f") {
+        return Some(chrono::DateTime::from_naive_utc_and_offset(dt, chrono::Utc));
+    }
+    if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
+        return Some(chrono::DateTime::from_naive_utc_and_offset(dt, chrono::Utc));
+    }
+    // 4. Thử YYYY-MM-DD
+    if let Ok(d) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+        if let Some(dt) = d.and_hms_opt(23, 59, 59) {
+            return Some(chrono::DateTime::from_naive_utc_and_offset(dt, chrono::Utc));
+        }
+    }
+    None
 }

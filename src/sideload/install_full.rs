@@ -3,7 +3,6 @@ use anyhow::{anyhow, Result};
 use std::path::{Path, PathBuf};
 
 use crate::auth::anisette::AnisetteClient;
-use crate::dev::max_certs::{handle_max_certs, MaxCertsBehavior};
 use crate::dev::DeveloperClient;
 use crate::session::Session;
 use crate::sideload::application::{Application, SpecialApp};
@@ -64,19 +63,6 @@ pub fn install_app_full(
 
     // 3. Cert
     report(0.15, "Get certificate");
-    let certs = dev.list_certificates(&mut anisette)?;
-    println!("     Existing certs: {}", certs.len());
-
-    handle_max_certs(
-        &mut dev,
-        &mut anisette,
-        &certs,
-        &MaxCertsBehavior::AutoRevokeOldest,
-    )?;
-
-    // Load session de lay apple_id + team_id
-    let session = crate::session::Session::load()?
-        .ok_or_else(|| anyhow::anyhow!("Chua login — can login truoc"))?;
     let apple_id = session.apple_id.clone();
     let team_id_sess = session.team_id.clone().unwrap_or_default();
     let cert_bundle = dev.ensure_certificate(
