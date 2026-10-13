@@ -373,7 +373,7 @@ impl CertificateBundle {
 
         match cert {
             Some(cert) => {
-                if let Ok(now) = openssl::asn1::Asn1Time::from_unix(crate::session::now() as i64) {
+                if let Ok(now) = openssl::asn1::Asn1Time::from_unix((crate::session::now() as i64) as _) {
                     cert.not_after() < now.as_ref()
                 } else {
                     false
