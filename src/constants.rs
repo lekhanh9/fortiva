@@ -1,14 +1,17 @@
 // src/constants.rs
 use std::path::PathBuf;
 
-pub const ANISETTE_URL: &str = "https://anisette-v3-server-aexk.onrender.com";
-pub const ANISETTE_FALLBACK: &[&str] = &[];
+pub const ANISETTE_URL: &str = "https://ani.sidestore.io";
+pub const ANISETTE_FALLBACK: &[&str] = &[
+    "https://anisette-v3-server-aexk.onrender.com",
+    "https://ani.sidestore.app",
+];
 
-pub const USER_AGENT: &str = "akd/1.0 CFNetwork/978.0.7 Darwin/18.7.0";
-pub const XCODE_UA: &str = "akd/1.0 CFNetwork/978.0.7 Darwin/18.7.0";
-// Khớp với Python reference (X-Mme-Client-Info)
+pub const USER_AGENT: &str = "akd/1.0 CFNetwork/1496.0.7 Darwin/23.5.0";
+pub const XCODE_UA: &str = "akd/1.0 CFNetwork/1496.0.7 Darwin/23.5.0";
+// Bypass lỗi -80045: giả lập iOS 17.5.1 Client-Info thay cho macOS 13.1
 pub const DEFAULT_CLIENT_INFO: &str =
-    "<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.akd/1.0)>";
+    "<iPhone16,1> <iOS;17.5.1;21F90> <com.apple.AuthKit/1 (com.apple.akd/1.0)>";
 
 pub const GSA_URL: &str = "https://gsa.apple.com/grandslam/GsService2";
 pub const GSA_VALIDATE_URL: &str = "https://gsa.apple.com/grandslam/GsService2/validate";
@@ -23,25 +26,7 @@ pub fn cookie_path() -> PathBuf {
     PathBuf::from(home).join(".fortiva").join("cookies.enc")
 }
 
-pub fn fix_client_info(ci: &str) -> String {
-    if ci.is_empty() {
-        return DEFAULT_CLIENT_INFO.to_string();
-    }
-
-    let mut result = String::with_capacity(ci.len());
-    let mut rest = ci;
-
-    while let Some(start) = rest.find("(com.apple.dt.Xcode") {
-        result.push_str(&rest[..start]);
-        if let Some(end) = rest[start..].find(')') {
-            result.push_str("(com.apple.akd/1.0)");
-            rest = &rest[start + end + 1..];
-        } else {
-            result.push_str(&rest[start..]);
-            rest = "";
-            break;
-        }
-    }
-    result.push_str(rest);
-    result.replace("com.apple.dt.Xcode", "com.apple.akd")
+pub fn fix_client_info(_ci: &str) -> String {
+    // Luôn ưu tiên iOS 17.5.1 để tránh Apple chặn -80045
+    DEFAULT_CLIENT_INFO.to_string()
 }

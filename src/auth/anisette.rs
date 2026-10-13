@@ -151,6 +151,7 @@ impl AnisetteClient {
             "X-Apple-I-SRL-NO": anisette.get("X-Apple-I-SRL-NO").cloned().unwrap_or_else(|| "0".to_string()),
             "X-Apple-I-Client-Time": anisette.get("X-Apple-I-Client-Time").cloned().unwrap_or_else(|| meta.get("X-Apple-I-Client-Time").cloned().unwrap_or_default()),
             "X-Apple-I-TimeZone": anisette.get("X-Apple-I-TimeZone").cloned().unwrap_or_else(|| "UTC".to_string()),
+            "X-MMe-Client-Info": client_info.clone(),
         });
 
         if let Some(obj) = cpd.as_object_mut() {
