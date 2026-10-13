@@ -205,17 +205,8 @@ impl GsaClient {
         let mut headers = HeaderMap::new();
 
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("text/x-xml-plist"));
-        headers.insert(ACCEPT, HeaderValue::from_static("text/x-xml-plist"));
+        headers.insert(ACCEPT, HeaderValue::from_static("*/*"));
         headers.insert(USER_AGENT, HeaderValue::from_static(UA));
-        headers.insert(
-            "X-Xcode-Version",
-            HeaderValue::from_static("27.0 (27A5218g)"),
-        );
-        headers.insert(
-            "X-Apple-App-Info",
-            HeaderValue::from_static("com.apple.gs.xcode.auth"),
-        );
-        headers.insert("Accept-Language", HeaderValue::from_static("en-us"));
         headers.insert(
             "X-Mme-Client-Info",
             HeaderValue::from_str(&self.client_info)?,

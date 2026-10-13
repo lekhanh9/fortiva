@@ -8,7 +8,6 @@ use std::time::{Duration, Instant};
 
 use crate::constants::{ANISETTE_FALLBACK, fix_client_info};
 use crate::config::Config;
-use crate::cache::AnisetteCache;
 
 pub struct AnisetteClient {
     url: String,
@@ -36,21 +35,8 @@ impl AnisetteClient {
     pub fn fetch(&mut self, force: bool) -> Result<HashMap<String, String>> {
         if !force {
             if let (Some(cached), Some(t)) = (&self.cached, self.cache_time) {
-                if t.elapsed() < Duration::from_secs(60) {
+                if t.elapsed() < Duration::from_secs(30) {
                     return Ok(cached.clone());
-                }
-            }
-
-            // File cache vinh vien
-            if let Ok(Some(cache)) = AnisetteCache::load() {
-                if cache.server_url == self.url {
-                    self.cached = Some(cache.headers.clone());
-                    self.cache_time = Some(Instant::now());
-                    eprintln!(
-                        "[anisette] Dung file cache ({} ngay truoc)",
-                        cache.age_secs() / 86400
-                    );
-                    return Ok(cache.headers);
                 }
             }
         }
@@ -104,9 +90,6 @@ impl AnisetteClient {
             }
             self.cached = Some(result.clone());
             self.cache_time = Some(Instant::now());
-
-            let _ = AnisetteCache::save_from(result.clone(), srv.clone());
-            eprintln!("[anisette] Da luu cache vinh vien tu {}", srv);
 
             return Ok(result);
         }
