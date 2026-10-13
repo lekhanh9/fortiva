@@ -9,9 +9,9 @@ pub const ANISETTE_FALLBACK: &[&str] = &[
 
 pub const USER_AGENT: &str = "akd/1.0 CFNetwork/1496.0.7 Darwin/23.5.0";
 pub const XCODE_UA: &str = "akd/1.0 CFNetwork/1496.0.7 Darwin/23.5.0";
-// Bypass lỗi -80045: giả lập iOS 17.5.1 Client-Info thay cho macOS 13.1
+// Giả lập Pixel 8 Pro (Android 14) Apple Music để bypass -80045 và phù hợp môi trường Android
 pub const DEFAULT_CLIENT_INFO: &str =
-    "<iPhone16,1> <iOS;17.5.1;21F90> <com.apple.AuthKit/1 (com.apple.akd/1.0)>";
+    "<Pixel 8 Pro> <Android;14;UP1A.231005.007> <com.apple.android.music/4.6.0 (1320)>";
 
 pub const GSA_URL: &str = "https://gsa.apple.com/grandslam/GsService2";
 pub const GSA_VALIDATE_URL: &str = "https://gsa.apple.com/grandslam/GsService2/validate";
@@ -27,6 +27,6 @@ pub fn cookie_path() -> PathBuf {
 }
 
 pub fn fix_client_info(_ci: &str) -> String {
-    // Luôn ưu tiên iOS 17.5.1 để tránh Apple chặn -80045
+    // Luôn ưu tiên Android Client-Info để tránh Apple chặn -80045
     DEFAULT_CLIENT_INFO.to_string()
 }
