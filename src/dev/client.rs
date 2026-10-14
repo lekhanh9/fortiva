@@ -154,6 +154,7 @@ impl DeveloperClient {
             params.insert("clientId".into(), Value::String(CLIENT_ID.into()));
             params.insert("protocolVersion".into(), Value::String(PROTOCOL_VERSION.into()));
             params.insert("requestId".into(), Value::String(uuid::Uuid::new_v4().to_string().to_uppercase()));
+            params.insert("userLocale".into(), Value::Array(vec![Value::String("en_US".into())]));
 
             if require_team {
                 let team = self.team_id.as_ref().ok_or_else(|| anyhow!("Chua co team_id"))?;
@@ -192,6 +193,23 @@ impl DeveloperClient {
                         .or_else(|| dict.get("resultcode"))
                         .and_then(plist_integer);
 
+                    let user_string = dict.get("userString")
+                        .or_else(|| dict.get("resultString"))
+                        .and_then(|v| v.as_string())
+                        .unwrap_or("");
+
+                    if let Some(code) = result_code {
+                        if code != 0 {
+                            self.last_error = Some(DevError {
+                                result_code: Some(code),
+                                user_string: user_string.to_string(),
+                            });
+                            if code != 1100 {
+                                eprintln!("[DevAPI] {} phản hồi resultCode {}: {}", action, code, user_string);
+                            }
+                        }
+                    }
+
                     if result_code == Some(1100) && attempt == 0 {
                         eprintln!("[DevAPI] anisette expired (1100) - refresh...");
                         self.anisette_cache.get(auth, true)?;
@@ -199,9 +217,6 @@ impl DeveloperClient {
                     }
 
                     // ⭐ Check session expired
-                    let user_string = dict.get("userString")
-                        .and_then(|v| v.as_string())
-                        .unwrap_or("");
                     let http_status = status.as_u16();
                     if is_session_expired_response(http_status, result_code, user_string) {
                         eprintln!("[DevAPI] ⚠️ Session expired: {}", user_string);
@@ -265,7 +280,7 @@ impl DeveloperClient {
     }
 }
 
-fn plist_integer(v: &Value) -> Option<i64> {
+pub(crate) fn plist_integer(v: &Value) -> Option<i64> {
     match v {
         Value::Integer(i) => i.to_string().parse::<i64>().ok(),
         Value::Real(r) => Some(*r as i64),

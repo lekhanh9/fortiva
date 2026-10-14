@@ -7,6 +7,7 @@ use crate::auth::AnisetteClient;
 
 impl DeveloperClient {
     /// Liệt kê tất cả certificate IOS_DEVELOPMENT của team hiện tại.
+    /// Tự động fallback sang Plist API listAllDevelopmentCerts nếu JSON API không khả dụng.
     pub fn list_certificates(
         &mut self,
         auth: &mut AnisetteClient,
@@ -22,16 +23,37 @@ impl DeveloperClient {
             team_id
         );
 
-        let resp = self.request_json(auth, "GET", &url, &query)?;
+        if let Ok(resp) = self.request_json(auth, "GET", &url, &query) {
+            if let Some(arr) = resp.get("data").and_then(|v| v.as_array()) {
+                if !arr.is_empty() {
+                    return Ok(arr.clone());
+                }
+            }
+        }
 
-        Ok(resp
-            .get("data")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default())
+        // Fallback: Plist API listAllDevelopmentCerts (chuẩn cho Free Developer accounts)
+        let plist_certs = self.list_all_development_certs(auth)?;
+        let json_certs = plist_certs
+            .into_iter()
+            .map(|c| {
+                serde_json::json!({
+                    "id": c.certificate_id,
+                    "attributes": {
+                        "name": c.name.unwrap_or_default(),
+                        "serialNumber": c.serial_number.unwrap_or_default(),
+                        "expirationDate": c.expiration_date.unwrap_or_default(),
+                        "certificateContent": c.cert_content_b64.unwrap_or_default(),
+                        "status": c.status.unwrap_or_default(),
+                    }
+                })
+            })
+            .collect();
+
+        Ok(json_certs)
     }
 
     /// Thu hồi certificate theo ID.
+    /// Tự động fallback sang Plist API revokeDevelopmentCert nếu JSON API không khả dụng.
     pub fn revoke_certificate(
         &mut self,
         auth: &mut AnisetteClient,
@@ -45,13 +67,23 @@ impl DeveloperClient {
         let url = format!("{}/certificates/{}", BASE_URL_V1, certificate_id);
         let query = format!("teamId={}", team_id);
 
-        match self.request_json(auth, "DELETE", &url, &query) {
-            Ok(_) => Ok(true),
-            Err(e) => {
-                eprintln!("[DevAPI] Revoke thất bại: {}", e);
-                Ok(false)
+        if let Ok(_) = self.request_json(auth, "DELETE", &url, &query) {
+            return Ok(true);
+        }
+
+        // Fallback: Tìm serialNumber qua list_all_development_certs và gọi Plist revokeDevelopmentCert
+        if let Ok(certs) = self.list_all_development_certs(auth) {
+            for c in certs {
+                if c.certificate_id == certificate_id {
+                    if let Some(ref serial) = c.serial_number {
+                        return self.revoke_development_cert(auth, serial);
+                    }
+                }
             }
         }
+
+        eprintln!("[DevAPI] Thu hồi certificate {} thất bại cả JSON và Plist API", certificate_id);
+        Ok(false)
     }
 
     /// Tìm cert content (base64 DER) theo certificate ID.
@@ -61,7 +93,7 @@ impl DeveloperClient {
         auth: &mut AnisetteClient,
         certificate_id: &str,
     ) -> Result<Option<String>> {
-        let delays = [2u64, 4, 6, 8, 10];
+        let delays = [1u64, 2, 4, 6];
 
         for attempt in 0..delays.len() {
             let certs = self.list_certificates(auth)?;
@@ -73,7 +105,9 @@ impl DeveloperClient {
                         .and_then(|a| a.get("certificateContent"))
                         .and_then(|c| c.as_str())
                     {
-                        return Ok(Some(content.to_string()));
+                        if !content.is_empty() {
+                            return Ok(Some(content.to_string()));
+                        }
                     }
                 }
             }

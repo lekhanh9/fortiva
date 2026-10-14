@@ -9,7 +9,7 @@ use plist::Value;
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use super::client::DeveloperClient;
+use super::client::{DeveloperClient, plist_integer};
 use crate::auth::AnisetteClient;
 
 pub struct CertificateBundle {
@@ -24,8 +24,144 @@ pub struct CertificateBundle {
     pub team_id: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct DevelopmentCert {
+    pub certificate_id: String,
+    pub serial_number: Option<String>,
+    pub name: Option<String>,
+    pub machine_id: Option<String>,
+    pub machine_name: Option<String>,
+    pub cert_content_b64: Option<String>,
+    pub status: Option<String>,
+    pub expiration_date: Option<String>,
+}
+
 impl DeveloperClient {
-    /// Tạo cert mới hoàn chỉnh: sinh RSA key, tạo CSR, gửi Apple, lấy cert về.
+    /// Lấy danh sách chứng chỉ iOS Development qua chuẩn Plist API (ios/listAllDevelopmentCerts.action).
+    /// Đây là endpoint chính thức được Xcode & isideload sử dụng cho cả tài khoản Free và Trả phí.
+    pub fn list_all_development_certs(
+        &mut self,
+        auth: &mut AnisetteClient,
+    ) -> Result<Vec<DevelopmentCert>> {
+        let resp = self.request_plist(
+            auth,
+            "ios/listAllDevelopmentCerts.action",
+            HashMap::new(),
+            true,
+        )?;
+
+        let certs_val = match resp.get("certificates").and_then(|v| v.as_array()) {
+            Some(arr) => arr,
+            None => {
+                let code = resp.get("resultCode").and_then(plist_integer);
+                let user_str = resp.get("userString").and_then(|v| v.as_string()).unwrap_or("");
+                if let Some(c) = code {
+                    if c != 0 {
+                        eprintln!("[DevAPI] listAllDevelopmentCerts resultCode {}: {}", c, user_str);
+                    }
+                }
+                return Ok(Vec::new());
+            }
+        };
+
+        let mut list = Vec::new();
+        for item in certs_val {
+            let dict = match item.as_dictionary() {
+                Some(d) => d,
+                None => continue,
+            };
+
+            let cert_id = dict
+                .get("certificateId")
+                .or_else(|| dict.get("certRequestId"))
+                .and_then(|v| v.as_string())
+                .unwrap_or("")
+                .to_string();
+
+            if cert_id.is_empty() {
+                continue;
+            }
+
+            let serial = dict
+                .get("serialNumber")
+                .and_then(|v| v.as_string())
+                .map(|s| s.to_string());
+
+            let name = dict
+                .get("name")
+                .and_then(|v| v.as_string())
+                .map(|s| s.to_string());
+
+            let machine_id = dict
+                .get("machineId")
+                .and_then(|v| v.as_string())
+                .map(|s| s.to_string());
+
+            let machine_name = dict
+                .get("machineName")
+                .and_then(|v| v.as_string())
+                .map(|s| s.to_string());
+
+            let cert_content_b64 = dict
+                .get("certContent")
+                .and_then(|v| v.as_data())
+                .map(|bytes| general_purpose::STANDARD.encode(bytes));
+
+            let status = dict
+                .get("status")
+                .and_then(|v| v.as_string())
+                .map(|s| s.to_string());
+
+            let exp = dict
+                .get("expirationDate")
+                .and_then(|v| match v {
+                    Value::String(s) => Some(s.clone()),
+                    Value::Date(d) => Some(d.to_xml_format()),
+                    _ => None,
+                });
+
+            list.push(DevelopmentCert {
+                certificate_id: cert_id,
+                serial_number: serial,
+                name,
+                machine_id,
+                machine_name,
+                cert_content_b64,
+                status,
+                expiration_date: exp,
+            });
+        }
+
+        Ok(list)
+    }
+
+    /// Thu hồi chứng chỉ theo số serial qua Plist API (ios/revokeDevelopmentCert.action).
+    pub fn revoke_development_cert(
+        &mut self,
+        auth: &mut AnisetteClient,
+        serial_number: &str,
+    ) -> Result<bool> {
+        let mut params = HashMap::new();
+        params.insert("serialNumber".into(), Value::String(serial_number.to_string()));
+
+        let resp = self.request_plist(
+            auth,
+            "ios/revokeDevelopmentCert.action",
+            params,
+            true,
+        )?;
+
+        let code = resp.get("resultCode").and_then(plist_integer).unwrap_or(0);
+        if code == 0 {
+            Ok(true)
+        } else {
+            let user_str = resp.get("userString").and_then(|v| v.as_string()).unwrap_or("");
+            eprintln!("[DevAPI] Thu hồi cert (serial: {}) thất bại: {} (code {})", serial_number, user_str, code);
+            Ok(false)
+        }
+    }
+
+    /// Tạo cert mới: sinh RSA key, tạo CSR, gửi Apple, tự động xử lý thu hồi nếu đạt giới hạn (mã 7460).
     pub fn create_certificate(
         &mut self,
         auth: &mut AnisetteClient,
@@ -33,37 +169,94 @@ impl DeveloperClient {
         apple_id: &str,
         team_id: &str,
     ) -> Result<Option<CertificateBundle>> {
-        eprintln!("[DevAPI] Tạo certificate mới...");
+        self.set_team(team_id.to_string());
+        eprintln!("[DevAPI] Bắt đầu quy trình tạo chứng chỉ Apple Development...");
 
         // 1. Sinh RSA key 2048-bit
         let rsa = Rsa::generate(2048)?;
         let pkey = PKey::from_rsa(rsa)?;
 
-        // 2. Tạo CSR
+        // 2. Tạo CSR với đầy đủ Subject Distinguished Name theo chuẩn Apple
         let csr_pem = build_csr(&pkey, machine_name)?;
 
-        // 3. Gửi lên Apple
+        // 3. Vòng lặp gửi CSR và xử lý mã 7460 (tự động thu hồi cert cũ nếu đạt giới hạn)
+        let mut attempts = 0;
+        let mut cert_id_opt: Option<String> = None;
         let machine_id = Uuid::new_v4().to_string().to_uppercase();
 
-        let mut params = HashMap::new();
-        params.insert("csrContent".into(), Value::String(csr_pem.clone()));
-        params.insert("machineId".into(), Value::String(machine_id.clone()));
-        params.insert(
-            "machineName".into(),
-            Value::String(machine_name.to_string()),
-        );
+        while attempts < 3 {
+            attempts += 1;
 
-        let resp = self.request_plist(
-            auth,
-            "ios/submitDevelopmentCSR.action",
-            params,
-            true,
-        )?;
+            let mut params = HashMap::new();
+            params.insert("csrContent".into(), Value::String(csr_pem.clone()));
+            params.insert("machineId".into(), Value::String(machine_id.clone()));
+            params.insert("machineName".into(), Value::String(machine_name.to_string()));
+            params.insert("teamId".into(), Value::String(team_id.to_string()));
 
-        let cert_request = match resp.get("certRequest").and_then(|v| v.as_dictionary()) {
-            Some(d) => d.clone(),
+            let resp = self.request_plist(
+                auth,
+                "ios/submitDevelopmentCSR.action",
+                params,
+                true,
+            )?;
+
+            let result_code = resp.get("resultCode").and_then(plist_integer).unwrap_or(0);
+            let user_str = resp.get("userString")
+                .or_else(|| resp.get("resultString"))
+                .and_then(|v| v.as_string())
+                .unwrap_or("");
+
+            if result_code == 0 {
+                if let Some(cert_req) = resp.get("certRequest").and_then(|v| v.as_dictionary()) {
+                    cert_id_opt = cert_req
+                        .get("certificateId")
+                        .or_else(|| cert_req.get("certRequestId"))
+                        .and_then(|v| v.as_string())
+                        .map(|s| s.to_string());
+                    break;
+                } else {
+                    eprintln!("[DevAPI] ⚠️ submitDevelopmentCSR trả về resultCode 0 nhưng không có certRequest");
+                }
+            } else if result_code == 7460 {
+                eprintln!("[DevAPI] ⚠️ Apple phản hồi mã 7460 (Đạt giới hạn chứng chỉ / Đã có chứng chỉ đang hoạt động): {}", user_str);
+                eprintln!("[DevAPI] Đang lấy danh sách chứng chỉ trên Apple Developer để tự động giải phóng...");
+
+                let remote_certs = self.list_all_development_certs(auth).unwrap_or_default();
+                if remote_certs.is_empty() {
+                    eprintln!("[DevAPI] ❌ Không tìm thấy chứng chỉ nào trên Apple để thu hồi.");
+                    return Err(anyhow!("Apple giới hạn chứng chỉ (7460): {}", user_str));
+                }
+
+                // Thu hồi cert đầu tiên có serial number
+                let mut revoked = false;
+                for rc in &remote_certs {
+                    if let Some(ref serial) = rc.serial_number {
+                        eprintln!("[DevAPI] Đang thu hồi chứng chỉ cũ '{}' (ID: {}, Serial: {})...", 
+                            rc.name.as_deref().unwrap_or("?"), rc.certificate_id, serial);
+                        if self.revoke_development_cert(auth, serial)? {
+                            eprintln!("[DevAPI] ✅ Đã thu hồi chứng chỉ cũ thành công!");
+                            revoked = true;
+                            break;
+                        }
+                    }
+                }
+
+                if !revoked {
+                    return Err(anyhow!("Không thể thu hồi chứng chỉ cũ trên Apple (7460): {}", user_str));
+                }
+
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                continue;
+            } else {
+                eprintln!("[DevAPI] ❌ Apple từ chối submitDevelopmentCSR: mã {}: {}", result_code, user_str);
+                return Err(anyhow!("Apple từ chối tạo chứng chỉ (mã {}): {}", result_code, user_str));
+            }
+        }
+
+        let cert_id = match cert_id_opt {
+            Some(id) => id,
             None => {
-                eprintln!("[DevAPI] Không có certRequest trong response");
+                eprintln!("[DevAPI] Không lấy được certificateId từ Apple response");
                 return Ok(None);
             }
         };
@@ -73,20 +266,36 @@ impl DeveloperClient {
             pkey.private_key_to_pem_pkcs8()?,
         )?;
 
-        // 5. Fetch cert content (retry)
-        let cert_id = cert_request
-            .get("certificateId")
-            .and_then(|v| v.as_string())
-            .map(|s| s.to_string());
+        // 5. Lấy cert content từ Apple Plist API
+        let mut cert_content_b64 = None;
+        for retry in 0..3 {
+            let remote_certs = self.list_all_development_certs(auth).unwrap_or_default();
+            for rc in &remote_certs {
+                if rc.certificate_id == cert_id {
+                    if let Some(ref b64) = rc.cert_content_b64 {
+                        cert_content_b64 = Some(b64.clone());
+                        break;
+                    }
+                }
+            }
+            if cert_content_b64.is_some() {
+                break;
+            }
+            if retry < 2 {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+            }
+        }
 
-        let cert_content_b64 = if let Some(id) = &cert_id {
-            self.fetch_certificate_content(auth, id)?
-        } else {
-            None
-        };
+        // Fallback: nếu listAllDevelopmentCerts không tìm thấy đúng ID, lấy cert có cert_content mới nhất
+        if cert_content_b64.is_none() {
+            let remote_certs = self.list_all_development_certs(auth).unwrap_or_default();
+            if let Some(first_with_content) = remote_certs.iter().find(|rc| rc.cert_content_b64.is_some()) {
+                cert_content_b64 = first_with_content.cert_content_b64.clone();
+            }
+        }
 
         Ok(Some(CertificateBundle {
-            certificate_id: cert_id,
+            certificate_id: Some(cert_id),
             cert_content_b64,
             private_key_pem,
             csr_pem,
@@ -97,9 +306,13 @@ impl DeveloperClient {
     }
 }
 
-/// Tạo CSR PEM từ RSA key.
+/// Tạo CSR PEM từ RSA key theo định dạng chuẩn Apple Developer.
 fn build_csr(pkey: &PKey<Private>, common_name: &str) -> Result<String> {
     let mut name_builder = X509NameBuilder::new()?;
+    name_builder.append_entry_by_text("C", "US")?;
+    name_builder.append_entry_by_text("ST", "STATE")?;
+    name_builder.append_entry_by_text("L", "LOCAL")?;
+    name_builder.append_entry_by_text("O", "ORGNIZATION")?;
     name_builder.append_entry_by_text("CN", common_name)?;
     let name = name_builder.build();
 
@@ -133,8 +346,8 @@ impl DeveloperClient {
     ///    - Nếu cert bị thu hồi / hết hạn trên Apple -> tự động xóa cert vô hiệu hóa.
     ///    - Nếu cert còn hợp lệ -> tái sử dụng luôn.
     /// 2. Nếu cần tạo mới:
-    ///    - Kiểm tra số lượng cert hiện có trên Apple. Nếu >= 3 (giới hạn free account) -> tự động revoke cert cũ nhất.
-    ///    - Tạo cert mới, lưu vào ~/.fortiva/certs/, trả về bundle.
+    ///    - Tự động gọi create_certificate (đã tích hợp tự động thu hồi cert cũ nếu đạt giới hạn).
+    ///    - Lưu vào ~/.fortiva/certs/, trả về bundle.
     pub fn ensure_certificate(
         &mut self,
         auth: &mut AnisetteClient,
@@ -142,13 +355,14 @@ impl DeveloperClient {
         apple_id: &str,
         team_id: &str,
     ) -> Result<CertificateBundle> {
+        self.set_team(team_id.to_string());
         let certs_dir = crate::session::Session::dir()?.join("certs");
         std::fs::create_dir_all(&certs_dir)?;
 
-        // Lấy danh sách certs active trên Apple Developer
-        let remote_certs_result = self.list_certificates(auth);
+        // Lấy danh sách certs active trên Apple Developer qua Plist API
+        let remote_certs = self.list_all_development_certs(auth).unwrap_or_default();
 
-        // Kiểm tra cert đã lưu cục bộ
+        // 1. Kiểm tra cert đã lưu cục bộ
         if let Some(cert) = CertificateBundle::load_latest(&certs_dir)? {
             let has_meta = !cert.apple_id.is_empty() && !cert.team_id.is_empty();
 
@@ -159,67 +373,30 @@ impl DeveloperClient {
                 println!("[cert] ⚠️ Cert lưu trên máy (ID: {:?}) đã hết hạn hoặc không có dữ liệu chứng chỉ. Tự động xoá...", cert.certificate_id);
                 let _ = clear_all_certs();
             } else {
-                // Cert cục bộ còn hiệu lực. Kiểm tra trạng thái trên Apple Developer nếu kết nối được.
-                match &remote_certs_result {
-                    Ok(remote_certs) => {
-                        let mut is_active = false;
-                        if let Some(cid) = &cert.certificate_id {
-                            for rc in remote_certs {
-                                if rc.get("id").and_then(|v| v.as_str()) == Some(cid) {
-                                    if let Some(exp_str) = rc
-                                        .get("attributes")
-                                        .and_then(|a| a.get("expirationDate"))
-                                        .and_then(|e| e.as_str())
-                                    {
-                                        if let Some(exp_time) = parse_expiration_date(exp_str) {
-                                            if exp_time < chrono::Utc::now() {
-                                                println!("[cert] ⚠️ Cert ID {} đã hết hạn trên Apple vào {}", cid, exp_str);
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    is_active = true;
-                                    break;
-                                }
+                // Kiểm tra cert cục bộ có còn active trên Apple Developer không
+                let mut is_active = false;
+                if let Some(ref cid) = cert.certificate_id {
+                    for rc in &remote_certs {
+                        if &rc.certificate_id == cid {
+                            if rc.status.as_deref().unwrap_or("Active").eq_ignore_ascii_case("Active") {
+                                is_active = true;
                             }
+                            break;
                         }
+                    }
+                }
 
-                        if is_active {
-                            println!("[cert] ✅ Tái sử dụng cert đã lưu: ID {:?} (hợp lệ trên Apple Developer)", cert.certificate_id.as_deref().unwrap_or("?"));
-                            return Ok(cert);
-                        } else {
-                            println!("[cert] ⚠️ Cert lưu trên máy (ID: {:?}) đã bị thu hồi hoặc hết hạn trên Apple. Tự động xoá...", cert.certificate_id);
-                            let _ = clear_all_certs();
-                        }
-                    }
-                    Err(e) => {
-                        println!("[cert] ⚠️ Không thể kết nối Apple Developer API để kiểm tra từ xa ({}). Tiếp tục sử dụng cert hợp lệ đã lưu trên máy.", e);
-                        return Ok(cert);
-                    }
+                if is_active || remote_certs.is_empty() {
+                    println!("[cert] ✅ Tái sử dụng cert đã lưu: ID {:?} (hợp lệ trên Apple Developer)", cert.certificate_id.as_deref().unwrap_or("?"));
+                    return Ok(cert);
+                } else {
+                    println!("[cert] ⚠️ Cert lưu trên máy (ID: {:?}) đã bị thu hồi hoặc hết hạn trên Apple. Tự động xoá...", cert.certificate_id);
+                    let _ = clear_all_certs();
                 }
             }
         }
 
-        let remote_certs = match remote_certs_result {
-            Ok(certs) => certs,
-            Err(_) => self.list_certificates(auth).unwrap_or_default(),
-        };
-
-        // Tự động giải phóng nếu đã đạt giới hạn 3 certs của Free Developer Account
-        if remote_certs.len() >= 3 {
-            println!(
-                "[cert] ⚠️ Đã đạt giới hạn chứng chỉ Apple ({}/3). Tự động thu hồi chứng chỉ cũ nhất...",
-                remote_certs.len()
-            );
-            super::max_certs::handle_max_certs(
-                self,
-                auth,
-                &remote_certs,
-                &super::max_certs::MaxCertsBehavior::AutoRevokeOldest,
-            )?;
-        }
-
-        // Tạo cert mới
+        // 2. Tạo cert mới
         println!("[cert] 🔑 Đang tạo chứng chỉ mới cho {} / {}...", apple_id, team_id);
         let bundle = self
             .create_certificate(auth, machine_name, apple_id, team_id)?
