@@ -227,14 +227,26 @@ fn cmd_login_apple_id() -> Result<()> {
     match srp.authenticate(&mut gsa, &mut twofa, &apple_id, &password, 0) {
         Ok(result) => {
             if result.authenticated {
+                let token_opt = result.session_token.as_ref().filter(|t| !t.is_empty());
+                if token_opt.is_none() {
+                    theme::error_box(
+                        "ĐĂNG NHẬP CHƯA HOÀN TẤT",
+                        &[
+                            "Xác thực SRP hoàn tất nhưng chưa lấy được Xcode AppToken.",
+                            "Vui lòng kiểm tra và nhập chính xác mã 2FA gửi về iPhone/iPad!",
+                        ],
+                    );
+                    return Err(anyhow!("Chưa nhận được AppToken"));
+                }
+                let token = token_opt.unwrap().clone();
                 let mut lines = vec![
                     format!("Apple ID:  {}", theme::muted(&apple_id)),
                     format!("DSID:      {}", result.dsid.as_deref().unwrap_or("(none)")),
                 ];
-                let token_display = match &result.session_token {
-                    Some(t) if t.len() > 30 => format!("{}...", &t[..30]),
-                    Some(t) => t.clone(),
-                    None => "(none)".to_string(),
+                let token_display = if token.len() > 30 {
+                    format!("{}...", &token[..30])
+                } else {
+                    token.clone()
                 };
                 lines.push(format!("Token:     {}", token_display));
                 theme::success_box("ĐĂNG NHẬP THÀNH CÔNG", &lines);

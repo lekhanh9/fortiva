@@ -248,12 +248,7 @@ impl SrpFlow {
                 println!("[srp] DSID: {}", dsid);
 
                 let input_func = |prompt: &str| -> String {
-                    use std::io::{self, Write};
-                    print!("{}", prompt);
-                    io::stdout().flush().ok();
-                    let mut s = String::new();
-                    io::stdin().read_line(&mut s).ok();
-                    s.trim().to_string()
+                    prompt_interactive_code(prompt)
                 };
 
                 let twofa_ok = TwoFAHandler::handle_2fa(
@@ -363,20 +358,16 @@ impl SrpFlow {
 
         if ec == -22411 && allow_2fa {
             println!("\n[srp] 📱 Apple đã gửi mã xác minh 2FA (-22411) tới thiết bị Apple của bạn!");
-            use std::io::{self, Write};
             for attempt in 1..=3 {
                 let prompt = if attempt == 1 {
                     "[2fa] Nhập mã 6 số hiển thị trên iPhone/iPad: "
                 } else {
                     "[2fa] Nhập lại mã 6 số từ iPhone/iPad: "
                 };
-                print!("{}", prompt);
-                io::stdout().flush().ok();
-                let mut code = String::new();
-                io::stdin().read_line(&mut code).ok();
-                let code = code.trim().to_string();
+                let code = prompt_interactive_code(prompt);
 
-                if code.is_empty() {
+                if code.is_empty() || code.eq_ignore_ascii_case("cancel") || code.eq_ignore_ascii_case("q") {
+                    println!("[2fa] Đã hủy nhập mã 2FA.");
                     break;
                 }
 
@@ -523,3 +514,37 @@ fn plist_integer(v: &Value) -> Option<i64> {
         _ => None,
     }
 }
+
+fn prompt_interactive_code(prompt_msg: &str) -> String {
+    use std::io::{self, BufRead, Write};
+    print!("{}", prompt_msg);
+    let _ = io::stdout().flush();
+
+    #[cfg(unix)]
+    {
+        if let Ok(tty_file) = std::fs::OpenOptions::new().read(true).write(true).open("/dev/tty") {
+            let mut reader = std::io::BufReader::new(tty_file);
+            let mut line = String::new();
+            while reader.read_line(&mut line).is_ok() {
+                let trimmed = line.trim().to_string();
+                if !trimmed.is_empty() {
+                    return trimmed;
+                }
+                line.clear();
+            }
+        }
+    }
+
+    let stdin = io::stdin();
+    let mut handle = stdin.lock();
+    let mut buf = String::new();
+    while handle.read_line(&mut buf).is_ok() {
+        let trimmed = buf.trim().to_string();
+        if !trimmed.is_empty() {
+            return trimmed;
+        }
+        buf.clear();
+    }
+    String::new()
+}
+
