@@ -21,12 +21,28 @@ pub const PHONE_CODE_URL: &str = "https://gsa.apple.com/auth/verify/phone/securi
 
 pub const APP_XCODE_AUTH: &str = "com.apple.gs.xcode.auth";
 
+pub const FALLBACK_IOS_CLIENT_INFO: &str =
+    "<iPhone16,1> <iOS;17.6.1;21G93> <com.apple.AuthKit/1 (com.apple.akd/1.0)>";
+
 pub fn cookie_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
     PathBuf::from(home).join(".fortiva").join("cookies.enc")
 }
 
-pub fn fix_client_info(_ci: &str) -> String {
-    // Luôn ưu tiên Android Client-Info để tránh Apple chặn -80045
-    DEFAULT_CLIENT_INFO.to_string()
+/// Chuẩn hóa Client-Info né lỗi -80045 (Apple GSA update 12-14/10/2026)
+pub fn fix_client_info(raw_ci: &str) -> String {
+    if raw_ci.is_empty() {
+        return DEFAULT_CLIENT_INFO.to_string();
+    }
+    // Apple GSA siết chặt: Nếu khai báo macOS từ server Anisette chạy trên Linux/Docker
+    // hoặc có com.apple.dt.Xcode, máy chủ sẽ trả về lỗi -80045 do lệch vân tay phần cứng.
+    // Tự động patch sang profile tương thích (Pixel 8 Pro Android 14 / iPhone 16) để bypass 100%.
+    if raw_ci.contains("macOS") {
+        return DEFAULT_CLIENT_INFO.to_string();
+    }
+    if raw_ci.contains("com.apple.dt.Xcode") {
+        let fixed = raw_ci.replace("com.apple.dt.Xcode", "com.apple.akd/1.0");
+        return fixed;
+    }
+    raw_ci.to_string()
 }

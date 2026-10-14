@@ -211,6 +211,14 @@ impl GsaClient {
             "X-Mme-Client-Info",
             HeaderValue::from_str(&self.client_info)?,
         );
+        headers.insert(
+            "X-MMe-Client-Info",
+            HeaderValue::from_str(&self.client_info)?,
+        );
+        headers.insert(
+            reqwest::header::CONNECTION,
+            HeaderValue::from_static("close"),
+        );
 
         Ok(headers)
     }
