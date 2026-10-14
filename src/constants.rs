@@ -9,9 +9,9 @@ pub const ANISETTE_FALLBACK: &[&str] = &[
 
 pub const USER_AGENT: &str = "akd/1.0 CFNetwork/1496.0.7 Darwin/23.5.0";
 pub const XCODE_UA: &str = "akd/1.0 CFNetwork/1496.0.7 Darwin/23.5.0";
-// Giả lập Pixel 8 Pro (Android 14) Apple Music để bypass -80045 và phù hợp môi trường Android
+// Giả lập iPhone 16 (iOS 17.6) AuthKit akd để bypass -80045 và tương thích GrandSlam Xcode AppToken
 pub const DEFAULT_CLIENT_INFO: &str =
-    "<Pixel 8 Pro> <Android;14;UP1A.231005.007> <com.apple.android.music/4.6.0 (1320)>";
+    "<iPhone16,1> <iOS;17.6.1;21G93> <com.apple.AuthKit/1 (com.apple.akd/1.0)>";
 
 pub const GSA_URL: &str = "https://gsa.apple.com/grandslam/GsService2";
 pub const GSA_VALIDATE_URL: &str = "https://gsa.apple.com/grandslam/GsService2/validate";
@@ -42,7 +42,7 @@ pub fn fix_client_info(raw_ci: &str) -> String {
     }
     // Apple GSA siết chặt: Nếu khai báo macOS từ server Anisette chạy trên Linux/Docker
     // hoặc có com.apple.dt.Xcode, máy chủ sẽ trả về lỗi -80045 do lệch vân tay phần cứng.
-    // Tự động patch sang profile tương thích (Pixel 8 Pro Android 14 / iPhone 16) để bypass 100%.
+    // Tự động patch sang profile iPhone 16 AuthKit akd để bypass 100% và tương thích Xcode auth.
     if raw_ci.contains("macOS") {
         return DEFAULT_CLIENT_INFO.to_string();
     }

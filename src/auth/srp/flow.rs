@@ -177,13 +177,32 @@ impl SrpFlow {
         let all_keys: Vec<&str> = spd_data.keys().map(|k| k.as_str()).collect();
         eprintln!("[DBG-SPD] All keys ({}): {:?}", all_keys.len(), all_keys);
 
+        let hsc = status
+            .get("hsc")
+            .and_then(plist_integer)
+            .unwrap_or(200);
+        let spd_status = spd_data
+            .get("status-code")
+            .and_then(plist_integer);
+        let spd_authmode = spd_data
+            .get("authmode")
+            .and_then(|v| v.as_string());
+        let status_au = status
+            .get("au")
+            .and_then(|v| v.as_string());
+
+        eprintln!(
+            "[DBG-2FA] Status.hsc={}, SPD.status-code={:?}, Status.au={:?}, SPD.authmode={:?}",
+            hsc, spd_status, status_au, spd_authmode
+        );
+
         // Trích xuất au đa tầng: Status -> Response -> SPD (au) -> SPD (authmode)
-        let auth_type = status
+        let mut auth_type = status
             .get("au")
             .or_else(|| complete_resp.get("au"))
             .or_else(|| spd_data.get("au"))
             .or_else(|| {
-                if let Some(am) = spd_data.get("authmode").and_then(|v| v.as_string()) {
+                if let Some(am) = spd_authmode {
                     if am != "password" {
                         return spd_data.get("authmode");
                     }
@@ -192,6 +211,15 @@ impl SrpFlow {
             })
             .and_then(|v| v.as_string())
             .map(|s| s.to_string());
+
+        // Nếu Apple trả về status-code/hsc 409 (Secondary Auth Required) mà chưa gán auth_type
+        if auth_type.is_none() && (hsc == 409 || spd_status == Some(409)) {
+            auth_type = Some(
+                spd_authmode
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "trustedDeviceSecondaryAuth".to_string()),
+            );
+        }
 
         eprintln!("[DBG-AUTH] auth_type = {:?}", auth_type);
 
@@ -248,10 +276,6 @@ impl SrpFlow {
         }
 
         let dsid = extract_string(&spd_data, &["adsid", "dsid"]);
-
-        // Delay truoc apptokens tranh Apple flag
-        println!("[srp] Cho 4s truoc apptokens...");
-        std::thread::sleep(std::time::Duration::from_secs(4));
 
         let app_token = if let (Some(adsid), Some(c2), Some(sk), Some(idms)) = (
             extract_string(&spd_data, &["adsid"]),

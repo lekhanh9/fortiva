@@ -81,8 +81,15 @@ ANISETTE_SERVERS = [
 # Client-Info Profiles
 CLIENT_PROFILES = [
     {
+        "id": "iphone16_akd",
+        "name": "iPhone 16 iOS 17.6 (AuthKit akd) [Chuẩn Apple ID & Developer]",
+        "client_info": "<iPhone16,1> <iOS;17.6.1;21G93> <com.apple.AuthKit/1 (com.apple.akd/1.0)>",
+        "user_agent": "akd/1.0 CFNetwork/1496.0.7 Darwin/23.5.0",
+        "svct": "iCloud"
+    },
+    {
         "id": "pixel8",
-        "name": "Pixel 8 Pro Android 14 (Apple Music) [Khuyên Dùng]",
+        "name": "Pixel 8 Pro Android 14 (Apple Music)",
         "client_info": "<Pixel 8 Pro> <Android;14;UP1A.231005.007> <com.apple.android.music/4.6.0 (1320)>",
         "user_agent": "AppleMusic/4.6.0 (Android;14)",
         "svct": "iCloud"
@@ -598,13 +605,20 @@ def perform_srp_login(username: str, password: str, profile: dict, depth: int = 
             except Exception as e:
                 print(f"{C_YELLOW}[!] Giải mã SPD payload thất bại: {e}{C_RESET}")
 
+    hsc = comp_status.get("hsc", 200)
+    spd_status = spd_dict.get("status-code")
+    spd_authmode = spd_dict.get("authmode")
+
     # Trích xuất au đa tầng: Status -> Response -> SPD (au) -> SPD (authmode)
     auth_type = (
         comp_status.get("au")
         or complete_resp.get("au")
         or spd_dict.get("au")
-        or (spd_dict.get("authmode") if spd_dict.get("authmode") != "password" else None)
+        or (spd_authmode if spd_authmode != "password" else None)
     )
+
+    if not auth_type and (hsc == 409 or spd_status == 409):
+        auth_type = spd_authmode or "trustedDeviceSecondaryAuth"
 
     # Kiểm tra lỗi tài khoản
     if comp_ec != 0 and not auth_type:
