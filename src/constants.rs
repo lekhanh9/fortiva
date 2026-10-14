@@ -12,7 +12,7 @@ pub const XCODE_UA: &str = "akd/1.0 CFNetwork/808.1.4";
 // Cấu hình chuẩn từ isideload: Pixel 7 (Android 14) + AuthKit akd
 // Khớp 100% chữ ký RINFO: 17106176 của Anisette v3 và có đầy đủ thẩm quyền GrandSlam
 pub const DEFAULT_CLIENT_INFO: &str =
-    "Pixel 8 Pro> <Android;14;UP1A.231005.007> <com.apple.AuthKit/1 (com.apple.android.music/4.6.0 (1320)>",
+    "Pixel 8 Pro> <Android;14;UP1A.231005.007> <com.apple.AuthKit/1 (com.apple.android.music/4.6.0 (1320)>";
 
 pub const GSA_URL: &str = "https://gsa.apple.com/grandslam/GsService2";
 pub const GSA_VALIDATE_URL: &str = "https://gsa.apple.com/grandslam/GsService2/validate";
