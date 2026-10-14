@@ -276,7 +276,22 @@ fn cmd_login_apple_id() -> Result<()> {
                             let mut ani = AnisetteClient::new(None);
                             match dev.list_teams(&mut ani) {
                                 Ok(teams) if !teams.is_empty() => {
-                                    let team = &teams[0];
+                                    log::info(&format!("Tìm thấy {} Developer Team:", teams.len()));
+                                    let mut selected_idx = 0;
+                                    for (i, t) in teams.iter().enumerate() {
+                                        let tid = t.get("teamId").or_else(|| t.get("teamID")).and_then(|v| v.as_string()).unwrap_or("?");
+                                        let tname = t.get("name").and_then(|v| v.as_string()).unwrap_or("?");
+                                        let ttype = t.get("type").and_then(|v| v.as_string()).unwrap_or("Individual");
+                                        log::info(&format!("  [{}] {} ({}) - {}", i + 1, tname, tid, ttype));
+
+                                        // Ưu tiên team Personal / Individual / Free
+                                        if ttype.eq_ignore_ascii_case("Free")
+                                            || ttype.eq_ignore_ascii_case("Individual")
+                                            || tname.to_lowercase().contains("personal") {
+                                            selected_idx = i;
+                                        }
+                                    }
+                                    let team = &teams[selected_idx];
                                     let tid = team
                                         .get("teamId")
                                         .or_else(|| team.get("teamID"))
@@ -288,7 +303,7 @@ fn cmd_login_apple_id() -> Result<()> {
                                         .map(|s| s.to_string());
 
                                     if let Some(id) = tid {
-                                        log::success(&format!("Team ID: {}", id));
+                                        log::success(&format!("Sử dụng Team ID: {}", id));
                                         if let Some(n) = &tname {
                                             log::info(&format!("Team name: {}", n));
                                         }
