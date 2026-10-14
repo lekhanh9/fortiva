@@ -220,11 +220,26 @@ def extract_bytes(val) -> bytes:
             return val.encode("utf-8")
     return bytes(val)
 
+def to_string(v) -> str:
+    """Chuyển đổi linh hoạt giá trị từ Plist (str, bytes, int) sang chuỗi sạch"""
+    if v is None:
+        return ""
+    if isinstance(v, str):
+        return v
+    if isinstance(v, bytes):
+        try:
+            return v.decode("utf-8")
+        except Exception:
+            return base64.b64encode(v).decode()
+    return str(v)
+
 def ensure_plist_wrapper(data: bytes) -> bytes:
     """Bọc thẻ plist XML nếu server trả về thiếu wrapper ngoài cùng"""
     stripped = data.strip()
     if stripped.startswith(b"<?xml") or stripped.startswith(b"bplist"):
         return data
+    if stripped.startswith(b"<plist"):
+        return b"<?xml version='1.0' encoding='UTF-8'?>\n" + data
     header = (
         b"<?xml version='1.0' encoding='UTF-8'?>\n"
         b"<!DOCTYPE plist PUBLIC '-//Apple//DTD PLIST 1.0//EN' 'http://www.apple.com/DTDs/PropertyList-1.0.dtd'>\n"
@@ -616,10 +631,13 @@ def perform_srp_login(username: str, password: str, profile: dict, depth: int = 
         if spd_raw and HAS_CRYPTOGRAPHY:
             try:
                 decrypted_spd = decrypt_cbc(session_key, spd_raw)
-                spd_dict = plistlib.loads(decrypted_spd)
+                wrapped_spd = ensure_plist_wrapper(decrypted_spd)
+                spd_dict = plistlib.loads(wrapped_spd)
                 print(f"{C_GREEN}[+] Giải mã SPD payload thành công ({len(spd_dict)} keys).{C_RESET}")
             except Exception as e:
                 print(f"{C_YELLOW}[!] Giải mã SPD payload thất bại: {e}{C_RESET}")
+                if 'decrypted_spd' in locals():
+                    print(f"  [DEBUG-SPD] First 100 bytes: {decrypted_spd[:100]}")
 
     hsc = comp_status.get("hsc", 200)
     spd_status = spd_dict.get("status-code")
@@ -644,8 +662,18 @@ def perform_srp_login(username: str, password: str, profile: dict, depth: int = 
     # 6. Xử lý 2FA nếu có yêu cầu
     if auth_type and any(k in str(auth_type) for k in ("SecondaryAuth", "secondaryAuth", "trustedDeviceSecondaryAuth", "smsSecondaryAuth")):
         print(f"\n{C_MAGENTA}{C_BOLD}[!] Apple yêu cầu xác minh 2FA: {auth_type}{C_RESET}")
-        dsid = str(spd_dict.get("adsid") or spd_dict.get("dsid") or comp_status.get("dsid") or "")
-        idms_token = str(spd_dict.get("GsIdmsToken") or spd_dict.get("idmsToken") or comp_status.get("idmsToken") or "")
+        dsid = (
+            to_string(spd_dict.get("adsid"))
+            or to_string(spd_dict.get("dsid"))
+            or to_string(comp_status.get("dsid"))
+            or to_string(complete_resp.get("dsid"))
+        )
+        idms_token = (
+            to_string(spd_dict.get("GsIdmsToken"))
+            or to_string(spd_dict.get("idmsToken"))
+            or to_string(comp_status.get("idmsToken"))
+            or to_string(complete_resp.get("idmsToken"))
+        )
 
         if not dsid or not idms_token:
             raise RuntimeError("Thiếu DSID hoặc IDMS-Token để thực hiện bước 2FA!")
@@ -666,8 +694,15 @@ def perform_srp_login(username: str, password: str, profile: dict, depth: int = 
             return perform_srp_login(username, password, profile, depth=depth + 1)
 
     # 7. Trích xuất thông tin phiên đăng nhập
-    adsid = str(spd_dict.get("adsid") or spd_dict.get("dsid") or comp_status.get("dsid") or "")
-    idms_token = str(spd_dict.get("GsIdmsToken") or spd_dict.get("idmsToken") or "")
+    adsid = (
+        to_string(spd_dict.get("adsid"))
+        or to_string(spd_dict.get("dsid"))
+        or to_string(comp_status.get("dsid"))
+    )
+    idms_token = (
+        to_string(spd_dict.get("GsIdmsToken"))
+        or to_string(spd_dict.get("idmsToken"))
+    )
     c_resp = spd_dict.get("c") or complete_resp.get("c")
     sk = extract_bytes(spd_dict.get("sk"))
 
