@@ -270,7 +270,9 @@ impl SrpFlow {
                 if depth >= 1 {
                     println!("[srp] Đã hoàn thành xác thực 2FA.");
                 } else {
-                    println!("[srp] Xác thực 2FA thành công! Tiếp tục lấy AppToken...");
+                    println!("[srp] ✅ Xác thực 2FA thành công! Tự động hoàn tất phiên trong nền...");
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                    return self.authenticate(gsa, twofa, apple_id, password, depth + 1);
                 }
             }
         }

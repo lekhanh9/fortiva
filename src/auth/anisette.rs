@@ -146,7 +146,7 @@ impl AnisetteClient {
             "X-Apple-I-MD": anisette.get("X-Apple-I-MD").cloned().unwrap_or_default(),
             "X-Apple-I-MD-M": anisette.get("X-Apple-I-MD-M").cloned().unwrap_or_default(),
             "X-Mme-Device-Id": anisette.get("X-Mme-Device-Id").cloned().unwrap_or_else(|| device_id.clone()),
-            "X-Apple-I-MD-LU": anisette.get("X-Apple-I-MD-LU").cloned().unwrap_or_default(),
+            "X-Apple-I-MD-LU": anisette.get("X-Apple-I-MD-LU").cloned().unwrap_or_else(|| meta.get("X-Apple-I-MD-LU").cloned().unwrap_or_default()),
             "X-Apple-I-MD-RINFO": anisette.get("X-Apple-I-MD-RINFO").cloned().unwrap_or_else(|| "17106176".to_string()),
             "X-Apple-I-SRL-NO": anisette.get("X-Apple-I-SRL-NO").cloned().unwrap_or_else(|| "0".to_string()),
             "X-Apple-I-Client-Time": anisette.get("X-Apple-I-Client-Time").cloned().unwrap_or_else(|| meta.get("X-Apple-I-Client-Time").cloned().unwrap_or_default()),
