@@ -50,12 +50,50 @@ impl Session {
 
     pub fn load() -> Result<Option<Self>> {
         let path = Self::path()?;
-        if !path.exists() {
-            return Ok(None);
+        if path.exists() {
+            let content = fs::read_to_string(&path).context("Đọc session file thất bại")?;
+            if let Ok(session) = serde_json::from_str::<Session>(&content) {
+                return Ok(Some(session));
+            }
         }
-        let content = fs::read_to_string(&path).context("Đọc session file thất bại")?;
-        let session: Session = serde_json::from_str(&content).context("Parse session JSON thất bại")?;
-        Ok(Some(session))
+
+        // Fallback: Check apple_session.json in current directory
+        let probe_file = PathBuf::from("apple_session.json");
+        if probe_file.exists() {
+            if let Ok(content) = fs::read_to_string(&probe_file) {
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                    let apple_id = val.get("username").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let dsid = val.get("dsid").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let session_token = val.get("app_token")
+                        .and_then(|v| v.as_str())
+                        .or_else(|| val.get("idms_token").and_then(|v| v.as_str()))
+                        .unwrap_or("")
+                        .to_string();
+
+                    if !apple_id.is_empty() && !dsid.is_empty() && !session_token.is_empty() {
+                        let team_id = val.get("team_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                        let team_name = val.get("team_name").and_then(|v| v.as_str()).map(|s| s.to_string());
+                        let now_ts = now();
+                        let sess = Session {
+                            apple_id,
+                            dsid,
+                            session_token,
+                            user_id: uuid::Uuid::new_v4().to_string().to_uppercase(),
+                            device_id: uuid::Uuid::new_v4().to_string().to_uppercase(),
+                            team_id,
+                            team_name,
+                            created_at: now_ts,
+                            expires_at: now_ts + 7 * 24 * 3600,
+                            token_issued_at: now_ts,
+                        };
+                        let _ = sess.save();
+                        return Ok(Some(sess));
+                    }
+                }
+            }
+        }
+
+        Ok(None)
     }
 
     pub fn clear() -> Result<()> {
@@ -71,7 +109,7 @@ impl Session {
         self.expires_at > 0 && now >= self.expires_at
     }
 
-    /// Tuoi cua token tinh bang giay.
+    /// Tuổi của token tính bằng giây.
     pub fn token_age_sec(&self) -> u64 {
         let now = now();
         let issued = if self.token_issued_at > 0 {
@@ -82,14 +120,14 @@ impl Session {
         now.saturating_sub(issued)
     }
 
-    /// Tuoi token tinh bang phut.
+    /// Tuổi token tính bằng phút.
     pub fn token_age_min(&self) -> u64 {
         self.token_age_sec() / 60
     }
 
-    /// Can refresh khong (mac dinh > 3 phut = 180s).
+    /// Cần refresh không (chỉ khi session hết hạn 7 ngày, tránh đăng nhập lặp lại).
     pub fn needs_refresh(&self) -> bool {
-        self.token_age_sec() > 420 // tương đương vs 7phút nếu hết thì sẽ buộc user login vào
+        self.is_expired()
     }
 
     pub fn time_left_str(&self) -> String {

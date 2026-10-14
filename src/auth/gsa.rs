@@ -224,7 +224,7 @@ impl GsaClient {
     }
 }
 
-fn ensure_plist_wrapper(bytes: &[u8]) -> Vec<u8> {
+pub fn ensure_plist_wrapper(bytes: &[u8]) -> Vec<u8> {
     let stripped = bytes
         .iter()
         .position(|b| !b.is_ascii_whitespace())

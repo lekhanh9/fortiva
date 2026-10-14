@@ -150,13 +150,16 @@ impl SrpFlow {
 
         let spd_data: Dictionary = if let Some(spd) = complete_resp.get("spd").and_then(|v| v.as_data()) {
             match decrypt_cbc(&session_key, spd) {
-                Ok(decrypted) => match plist::from_bytes::<Value>(&decrypted) {
-                    Ok(val) => val.as_dictionary().cloned().unwrap_or_default(),
-                    Err(e) => {
-                        println!("[srp] Parse spd that bai: {}", e);
-                        Dictionary::new()
+                Ok(decrypted) => {
+                    let wrapped = crate::auth::gsa::ensure_plist_wrapper(&decrypted);
+                    match plist::from_bytes::<Value>(&wrapped) {
+                        Ok(val) => val.as_dictionary().cloned().unwrap_or_default(),
+                        Err(e) => {
+                            println!("[srp] Parse spd that bai: {}", e);
+                            Dictionary::new()
+                        }
                     }
-                },
+                }
                 Err(e) => {
                     println!("[srp] Decrypt spd CBC that bai: {}", e);
                     Dictionary::new()
@@ -270,11 +273,9 @@ impl SrpFlow {
                 }
 
                 if depth >= 1 {
-                    println!("[srp] Da retry 2FA roi, tiep tuc (khong retry nua)");
+                    println!("[srp] Đã hoàn thành xác thực 2FA.");
                 } else {
-                    println!("[srp] 2FA OK, dang nhap lai de cap nhat quyen phien...");
-                    std::thread::sleep(std::time::Duration::from_secs(2));
-                    return self.authenticate(gsa, twofa, apple_id, password, depth + 1);
+                    println!("[srp] Xác thực 2FA thành công! Tiếp tục lấy AppToken...");
                 }
             }
         }
@@ -459,7 +460,8 @@ impl SrpFlow {
             .context("Decrypt et GCM that bai")?;
         eprintln!("[DBG-APPTOKEN] ✅ decrypted len: {}", decrypted.len());
 
-        let plist_val: Value = plist::from_bytes(&decrypted).context("Parse et plist that bai")?;
+        let wrapped_et = crate::auth::gsa::ensure_plist_wrapper(&decrypted);
+        let plist_val: Value = plist::from_bytes(&wrapped_et).context("Parse et plist that bai")?;
 
         let app_tokens = plist_val
             .as_dictionary()

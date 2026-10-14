@@ -711,6 +711,8 @@ def perform_srp_login(username: str, password: str, profile: dict, depth: int = 
         "dsid": adsid,
         "idms_token": idms_token,
         "app_token": None,
+        "team_id": None,
+        "team_name": None,
         "client_info": client_info,
         "session_timestamp": time.time()
     }
@@ -743,30 +745,62 @@ def perform_srp_login(username: str, password: str, profile: dict, depth: int = 
                 code = input(f"{C_BOLD}{C_YELLOW}[?] Enter 6-digit code shown on iPhone/iPad: {C_RESET}").strip()
                 if code:
                     print("[2FA] Submitting verification code to Apple...")
+                    device_id = ani.get("X-Mme-Device-Id", str(uuid.uuid4()).upper())
                     verify_headers = {
                         "Content-Type": "text/x-xml-plist",
                         "Accept": "text/x-xml-plist",
-                        "User-Agent": "akd/1.0 CFNetwork/1496.0.7 Darwin/23.5.0",
+                        "User-Agent": ua,
                         "Accept-Language": "en-us",
                         "X-Apple-Identity-Token": base64.b64encode(f"{adsid}:{idms_token}".encode()).decode(),
                         "X-Apple-App-Info": APP_XCODE_AUTH,
                         "X-Xcode-Version": "14.2 (14C18)",
                         "X-Mme-Client-Info": client_info,
                         "X-Apple-I-DSID": str(adsid),
+                        "X-Apple-I-MD": ani.get("X-Apple-I-MD", ""),
+                        "X-Apple-I-MD-M": ani.get("X-Apple-I-MD-M", ""),
+                        "X-Apple-I-MD-LU": base64.b64encode(str(adsid).encode()).decode(),
+                        "X-Apple-I-MD-RINFO": "17106176",
+                        "X-Mme-Device-Id": device_id,
+                        "X-Apple-I-Client-Time": ani.get("X-Apple-I-Client-Time", ""),
+                        "X-Apple-I-TimeZone": "UTC",
+                        "X-Apple-Locale": "en_US",
                         "security-code": code,
                     }
                     ctx = ssl.create_default_context()
                     ctx.check_hostname = False
                     ctx.verify_mode = ssl.CERT_NONE
+                    twofa_ok = False
                     try:
                         v_req = urllib.request.Request(GSA_VALIDATE_URL, data=b"", headers=verify_headers)
                         with urllib.request.urlopen(v_req, context=ctx, timeout=15) as v_resp:
-                            if v_resp.status in (200, 204):
+                            v_body = v_resp.read()
+                            try:
+                                v_parsed = plistlib.loads(ensure_plist_wrapper(v_body))
+                                v_ec = v_parsed.get("Response", {}).get("Status", {}).get("ec", 0)
+                            except Exception:
+                                v_ec = 0
+                            if v_ec == 0 or v_resp.status in (200, 204):
                                 print(f"{C_GREEN}[+] 2FA verification successful! Fetching AppToken...{C_RESET}")
-                                time.sleep(2)
-                                token_resp = gsa_request(app_params, client_info, ani, ua, svct=svct, retries=1)
+                                twofa_ok = True
+                            else:
+                                print(f"{C_RED}[-] 2FA verification rejected by Apple (ec={v_ec}){C_RESET}")
+                    except urllib.error.HTTPError as ve:
+                        try:
+                            v_parsed = plistlib.loads(ensure_plist_wrapper(ve.read()))
+                            v_ec = v_parsed.get("Response", {}).get("Status", {}).get("ec", -1)
+                        except Exception:
+                            v_ec = -1
+                        print(f"{C_RED}[-] 2FA verification error: HTTP {ve.code} (ec={v_ec}){C_RESET}")
                     except Exception as ve:
-                        print(f"{C_RED}[-] 2FA verification failed: {ve}{C_RESET}")
+                        print(f"{C_RED}[-] 2FA connection error: {ve}{C_RESET}")
+
+                    if twofa_ok:
+                        time.sleep(1)
+                        token_resp = gsa_request(app_params, client_info, ani, ua, svct=svct, retries=1)
+                        if "et" not in token_resp and depth == 0:
+                            print(f"{C_CYAN}[*] Finalizing authenticated session automatically in background...{C_RESET}")
+                            time.sleep(1)
+                            return perform_srp_login(username, password, profile, depth=depth + 1)
 
             et = extract_bytes(token_resp.get("et"))
             if et:
@@ -777,7 +811,11 @@ def perform_srp_login(username: str, password: str, profile: dict, depth: int = 
                 if token_val:
                     print(f"{C_GREEN}{C_BOLD}[+] Received Xcode AppToken successfully!{C_RESET}")
                     auth_result["app_token"] = token_val
-                    test_developer_api(adsid, token_val, ani)
+                    teams = test_developer_api(adsid, token_val, ani)
+                    if teams and len(teams) > 0:
+                        t0 = teams[0]
+                        auth_result["team_id"] = t0.get("teamId") or t0.get("teamID")
+                        auth_result["team_name"] = t0.get("name")
         except Exception as e:
             print(f"{C_YELLOW}[!] Error requesting AppToken: {e}{C_RESET}")
 
@@ -918,6 +956,38 @@ def run_probe():
     print("=" * 80)
 
 
+def save_session_files(res, out_file="apple_session.json"):
+    """Save session to both local json and ~/.fortiva/session.json for seamless CLI integration"""
+    with open(out_file, "w") as f:
+        json.dump(res, f, indent=2)
+    print(f"{C_GREEN}[+] Diagnostic session saved to: {out_file}{C_RESET}")
+
+    try:
+        home = os.environ.get("HOME", ".")
+        fortiva_dir = os.path.join(home, ".fortiva")
+        os.makedirs(fortiva_dir, exist_ok=True)
+        fortiva_sess_path = os.path.join(fortiva_dir, "session.json")
+        now_ts = int(time.time())
+        token = res.get("app_token") or res.get("idms_token") or ""
+        fortiva_session = {
+            "apple_id": res.get("username", ""),
+            "dsid": res.get("dsid", ""),
+            "session_token": token,
+            "user_id": str(uuid.uuid4()).upper(),
+            "device_id": str(uuid.uuid4()).upper(),
+            "team_id": res.get("team_id"),
+            "team_name": res.get("team_name"),
+            "created_at": now_ts,
+            "expires_at": now_ts + 7 * 24 * 3600,
+            "token_issued_at": now_ts
+        }
+        with open(fortiva_sess_path, "w") as f:
+            json.dump(fortiva_session, f, indent=2)
+        print(f"{C_GREEN}[+] Synced to Fortiva native session: {fortiva_sess_path}{C_RESET}")
+    except Exception as e:
+        print(f"{C_YELLOW}[!] Warning syncing ~/.fortiva/session.json: {e}{C_RESET}")
+
+
 # =============================================================================
 #   MAIN ENTRY POINT
 # =============================================================================
@@ -956,12 +1026,13 @@ def main():
             print(f"  • IDMS-Token:  {C_CYAN}{res['idms_token'][:20]}... (len={len(res['idms_token'])}){C_RESET}")
             if res.get("app_token"):
                 print(f"  • AppToken:    {C_GREEN}{res['app_token'][:30]}... (len={len(res['app_token'])}){C_RESET}")
+            if res.get("team_id"):
+                t_name = f" ({res['team_name']})" if res.get("team_name") else ""
+                print(f"  • Team ID:     {C_GREEN}{res['team_id']}{t_name}{C_RESET}")
             print("=" * 80)
 
             out_file = args.output or "apple_session.json"
-            with open(out_file, "w") as f:
-                json.dump(res, f, indent=2)
-            print(f"{C_GREEN}[+] Session saved to: {out_file}{C_RESET}")
+            save_session_files(res, out_file)
         except Exception as e:
             print(f"\n{C_RED}{C_BOLD}❌ LOGIN FAILED: {e}{C_RESET}")
         return
@@ -1005,12 +1076,13 @@ def main():
             print(f"  • IDMS-Token:  {C_CYAN}{res['idms_token'][:20]}... (len={len(res['idms_token'])}){C_RESET}")
             if res.get("app_token"):
                 print(f"  • AppToken:    {C_GREEN}{res['app_token'][:30]}... (len={len(res['app_token'])}){C_RESET}")
+            if res.get("team_id"):
+                t_name = f" ({res['team_name']})" if res.get("team_name") else ""
+                print(f"  • Team ID:     {C_GREEN}{res['team_id']}{t_name}{C_RESET}")
             print("=" * 80)
 
             out_file = "apple_session.json"
-            with open(out_file, "w") as f:
-                json.dump(res, f, indent=2)
-            print(f"{C_GREEN}[+] Session saved to: {out_file}{C_RESET}")
+            save_session_files(res, out_file)
         except Exception as e:
             print(f"\n{C_RED}{C_BOLD}❌ LOGIN FAILED: {e}{C_RESET}")
     else:

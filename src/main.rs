@@ -116,13 +116,9 @@ use fortiva::dev::{is_session_expired, print_session_expired_help};
 /// Lấy session, nếu chưa login hoặc hết hạn thì hỏi đăng nhập luôn (kiểu iLoader)
 fn ensure_or_prompt_session() -> Result<Session> {
     match Session::load()? {
-        Some(s) if !s.is_expired() && !s.needs_refresh() => Ok(s),
-        Some(s) => {
-            if s.is_expired() {
-                log::warn("Session Apple ID đã hết hạn (quá 7 ngày). Cần đăng nhập lại.");
-            } else if s.needs_refresh() {
-                log::warn(&format!("Token Apple đã cũ ({} phút). Vui lòng đăng nhập lại.", s.token_age_min()));
-            }
+        Some(s) if !s.is_expired() => Ok(s),
+        Some(_) => {
+            log::warn("Session Apple ID đã hết hạn (quá 7 ngày). Cần đăng nhập lại.");
             if prompt_yn("Đăng nhập lại Apple ID ngay bây giờ? (y/n):") {
                 cmd_login_apple_id()?;
                 Session::load()?
@@ -173,22 +169,17 @@ fn get_account_status() -> String {
     match Session::load() {
         Ok(Some(s)) => {
             if s.is_expired() {
-                theme::warning(&format!("Account: {} (het han)", s.apple_id))
-            } else if s.needs_refresh() {
-                theme::warning(&format!(
-                    "Account: {} (token cu {} phut)",
-                    s.apple_id,
-                    s.token_age_min()
-                ))
+                theme::warning(&format!("Account: {} (hết hạn)", s.apple_id))
             } else {
-                theme::success(&format!(
-                    "Account: {} ({} phut)",
-                    s.apple_id,
-                    s.token_age_min()
-                ))
+                let team_info = s.team_name.as_deref().unwrap_or(s.team_id.as_deref().unwrap_or(""));
+                if !team_info.is_empty() {
+                    theme::success(&format!("Account: {} [{}]", s.apple_id, team_info))
+                } else {
+                    theme::success(&format!("Account: {}", s.apple_id))
+                }
             }
         }
-        _ => theme::muted("Account: Chua login"),
+        _ => theme::muted("Account: Chưa đăng nhập"),
     }
 }
 
