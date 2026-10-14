@@ -598,13 +598,21 @@ def perform_srp_login(username: str, password: str, profile: dict, depth: int = 
             except Exception as e:
                 print(f"{C_YELLOW}[!] Giải mã SPD payload thất bại: {e}{C_RESET}")
 
+    # Trích xuất au đa tầng: Status -> Response -> SPD (au) -> SPD (authmode)
+    auth_type = (
+        comp_status.get("au")
+        or complete_resp.get("au")
+        or spd_dict.get("au")
+        or (spd_dict.get("authmode") if spd_dict.get("authmode") != "password" else None)
+    )
+
     # Kiểm tra lỗi tài khoản
     if comp_ec != 0 and not auth_type:
         em = comp_status.get("em", "Tài khoản hoặc mật khẩu không chính xác")
         raise RuntimeError(f"Xác thực thất bại (ec={comp_ec}): {em}")
 
     # 6. Xử lý 2FA nếu có yêu cầu
-    if auth_type in ("trustedDeviceSecondaryAuth", "secondaryAuth", "smsSecondaryAuth"):
+    if auth_type and any(k in str(auth_type) for k in ("SecondaryAuth", "secondaryAuth", "trustedDeviceSecondaryAuth", "smsSecondaryAuth")):
         print(f"\n{C_MAGENTA}{C_BOLD}[!] Apple yêu cầu xác minh 2FA: {auth_type}{C_RESET}")
         dsid = str(spd_dict.get("adsid") or spd_dict.get("dsid") or comp_status.get("dsid") or "")
         idms_token = str(spd_dict.get("GsIdmsToken") or spd_dict.get("idmsToken") or comp_status.get("idmsToken") or "")
@@ -661,6 +669,39 @@ def perform_srp_login(username: str, password: str, profile: dict, depth: int = 
             }
 
             token_resp = gsa_request(app_params, client_info, ani, ua, svct=svct, retries=1)
+            token_ec = token_resp.get("Status", {}).get("ec", 0)
+
+            # Nếu Apple yêu cầu 2FA (-22411) ngay tại bước AppToken
+            if token_ec == -22411:
+                print(f"\n{C_MAGENTA}{C_BOLD}[2FA] 📱 Apple đã gửi mã xác minh 2FA (-22411) tới thiết bị Apple của bạn!{C_RESET}")
+                code = input(f"{C_BOLD}{C_YELLOW}[?] Nhập mã 6 số hiển thị trên iPhone/iPad: {C_RESET}").strip()
+                if code:
+                    print("[2FA] Đang gửi mã xác thực lên Apple...")
+                    verify_headers = {
+                        "Content-Type": "text/x-xml-plist",
+                        "Accept": "text/x-xml-plist",
+                        "User-Agent": "akd/1.0 CFNetwork/1496.0.7 Darwin/23.5.0",
+                        "Accept-Language": "en-us",
+                        "X-Apple-Identity-Token": base64.b64encode(f"{adsid}:{idms_token}".encode()).decode(),
+                        "X-Apple-App-Info": APP_XCODE_AUTH,
+                        "X-Xcode-Version": "14.2 (14C18)",
+                        "X-Mme-Client-Info": client_info,
+                        "X-Apple-I-DSID": str(adsid),
+                        "security-code": code,
+                    }
+                    ctx = ssl.create_default_context()
+                    ctx.check_hostname = False
+                    ctx.verify_mode = ssl.CERT_NONE
+                    try:
+                        v_req = urllib.request.Request(GSA_VALIDATE_URL, data=b"", headers=verify_headers)
+                        with urllib.request.urlopen(v_req, context=ctx, timeout=15) as v_resp:
+                            if v_resp.status in (200, 204):
+                                print(f"{C_GREEN}[+] Xác thực 2FA thành công! Đang lấy AppToken...{C_RESET}")
+                                time.sleep(2)
+                                token_resp = gsa_request(app_params, client_info, ani, ua, svct=svct, retries=1)
+                    except Exception as ve:
+                        print(f"{C_RED}[-] Xác thực 2FA thất bại: {ve}{C_RESET}")
+
             et = extract_bytes(token_resp.get("et"))
             if et:
                 decrypted_et = decrypt_gcm(sk, et)

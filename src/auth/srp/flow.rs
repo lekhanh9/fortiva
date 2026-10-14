@@ -11,7 +11,10 @@ use super::variant::SrpClient;
 use crate::auth::crypto::aes::{decrypt_cbc, decrypt_gcm};
 use crate::auth::gsa::GsaClient;
 use crate::auth::twofa::TwoFAHandler;
+use crate::constants::GSA_VALIDATE_URL;
 use crate::AuthResult;
+use reqwest::header::HeaderValue;
+use std::time::Duration;
 
 const APP_XCODE_AUTH: &str = "com.apple.gs.xcode.auth";
 
@@ -130,11 +133,6 @@ impl SrpFlow {
             .ok_or_else(|| anyhow!("Response thieu 'Status'"))?
             .clone();
 
-        let auth_type = status
-            .get("au")
-            .and_then(|v| v.as_string())
-            .map(|s| s.to_string());
-
         if let Some(m2) = complete_resp.get("M2").and_then(|v| v.as_data()) {
             match srp.verify_server_proof(m2) {
                 Ok(true) => println!("[srp] M2 verified"),
@@ -179,8 +177,26 @@ impl SrpFlow {
         let all_keys: Vec<&str> = spd_data.keys().map(|k| k.as_str()).collect();
         eprintln!("[DBG-SPD] All keys ({}): {:?}", all_keys.len(), all_keys);
 
+        // Trích xuất au đa tầng: Status -> Response -> SPD (au) -> SPD (authmode)
+        let auth_type = status
+            .get("au")
+            .or_else(|| complete_resp.get("au"))
+            .or_else(|| spd_data.get("au"))
+            .or_else(|| {
+                if let Some(am) = spd_data.get("authmode").and_then(|v| v.as_string()) {
+                    if am != "password" {
+                        return spd_data.get("authmode");
+                    }
+                }
+                None
+            })
+            .and_then(|v| v.as_string())
+            .map(|s| s.to_string());
+
+        eprintln!("[DBG-AUTH] auth_type = {:?}", auth_type);
+
         if let Some(au) = &auth_type {
-            if au == "trustedDeviceSecondaryAuth" || au == "secondaryAuth" || au == "smsSecondaryAuth" {
+            if au.contains("SecondaryAuth") || au == "secondaryAuth" || au == "trustedDeviceSecondaryAuth" || au == "smsSecondaryAuth" {
                 println!("[srp] Yeu cau 2FA: {}", au);
 
                 // Delay 3s trước khi gửi 2FA — tránh Apple 403 vì request quá nhanh
@@ -243,7 +259,7 @@ impl SrpFlow {
             extract_data_flexible(&spd_data, "sk"),
             extract_string(&spd_data, &["GsIdmsToken", "idmsToken"]),
         ) {
-            match self.fetch_app_token(gsa, &adsid, &c2, &idms, &sk, &session_key) {
+            match self.fetch_app_token(gsa, twofa, &adsid, &c2, &idms, &sk, &session_key, true) {
                 Ok(Some(t)) => {
                     println!("[srp] App token OK");
                     Some(t)
@@ -270,11 +286,13 @@ impl SrpFlow {
     fn fetch_app_token(
         &self,
         gsa: &mut GsaClient,
+        twofa: &mut TwoFAHandler,
         adsid: &str,
         c: &Value,
         idms_token: &str,
         sk: &[u8],
         session_key: &[u8],
+        allow_2fa: bool,
     ) -> Result<Option<String>> {
         eprintln!("[DBG-APPTOKEN] === fetch_app_token ===");
         eprintln!("[DBG-APPTOKEN] adsid: {}", &adsid[..adsid.len().min(20)]);
@@ -306,6 +324,69 @@ impl SrpFlow {
                 e
             })?;
         eprintln!("[DBG-APPTOKEN] ✅ response keys: {:?}", resp.keys().collect::<Vec<_>>());
+
+        let ec = resp
+            .get("Status")
+            .and_then(|v| v.as_dictionary())
+            .and_then(|d| d.get("ec"))
+            .and_then(plist_integer)
+            .unwrap_or(0);
+
+        if ec == -22411 && allow_2fa {
+            println!("\n[srp] 📱 Apple đã gửi mã xác minh 2FA (-22411) tới thiết bị Apple của bạn!");
+            use std::io::{self, Write};
+            print!("[2fa] Nhập mã 6 số hiển thị trên iPhone/iPad: ");
+            io::stdout().flush().ok();
+            let mut code = String::new();
+            io::stdin().read_line(&mut code).ok();
+            let code = code.trim().to_string();
+
+            if !code.is_empty() {
+                println!("[2fa] Đang gửi mã 2FA xác thực với Apple...");
+                let mut verify_headers = twofa.build_2fa_headers(
+                    &mut gsa.anisette,
+                    adsid,
+                    idms_token,
+                    &gsa.user_id,
+                    &gsa.device_id,
+                )?;
+                verify_headers.insert(
+                    "security-code",
+                    HeaderValue::from_str(&code)?,
+                );
+
+                let v_resp = twofa
+                    .client
+                    .post(GSA_VALIDATE_URL)
+                    .headers(verify_headers)
+                    .body("")
+                    .timeout(Duration::from_secs(15))
+                    .send();
+
+                match v_resp {
+                    Ok(r) if r.status().is_success() => {
+                        println!("[2fa] Xác thực 2FA thành công! Đang lấy AppToken...");
+                        std::thread::sleep(Duration::from_secs(2));
+                        return self.fetch_app_token(
+                            gsa,
+                            twofa,
+                            adsid,
+                            c,
+                            idms_token,
+                            sk,
+                            session_key,
+                            false,
+                        );
+                    }
+                    Ok(r) => {
+                        eprintln!("[2fa] Xác thực 2FA thất bại: HTTP {}", r.status());
+                    }
+                    Err(e) => {
+                        eprintln!("[2fa] Lỗi kết nối xác thực 2FA: {}", e);
+                    }
+                }
+            }
+        }
 
         let et = resp
             .get("et")
