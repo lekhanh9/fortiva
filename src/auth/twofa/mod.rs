@@ -124,6 +124,7 @@ impl TwoFAHandler {
         twofa: &mut TwoFAHandler,
         anisette: &mut AnisetteClient,
         auth_type: &str,
+        already_sent: bool,
         dsid: &str,
         idms_token: &str,
         user_id: &str,
@@ -132,10 +133,9 @@ impl TwoFAHandler {
     ) -> Result<bool> {
         match auth_type {
             "trustedDeviceSecondaryAuth" | "secondaryAuth" => {
-                println!("[2fa] Trying trusted device first...");
                 let trusted = TrustedDeviceHandler;
                 match trusted.handle(
-                    twofa, anisette, dsid, idms_token, user_id, device_id, input_func,
+                    twofa, anisette, already_sent, dsid, idms_token, user_id, device_id, input_func,
                 ) {
                     Ok(true) => return Ok(true),
                     Ok(false) => println!("[2fa] Trusted device fail, fallback SMS"),
@@ -157,7 +157,7 @@ impl TwoFAHandler {
                 }
 
                 let trusted = TrustedDeviceHandler;
-                trusted.handle(twofa, anisette, dsid, idms_token, user_id, device_id, input_func)
+                trusted.handle(twofa, anisette, false, dsid, idms_token, user_id, device_id, input_func)
             }
             other => Err(anyhow!("2FA type not supported: {}", other)),
         }

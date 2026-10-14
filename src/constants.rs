@@ -7,11 +7,12 @@ pub const ANISETTE_FALLBACK: &[&str] = &[
     "https://ani.sidestore.app",
 ];
 
-pub const USER_AGENT: &str = "akd/1.0 CFNetwork/1496.0.7 Darwin/23.5.0";
-pub const XCODE_UA: &str = "akd/1.0 CFNetwork/1496.0.7 Darwin/23.5.0";
-// Giả lập iPhone 16 (iOS 17.6) AuthKit akd để bypass -80045 và tương thích GrandSlam Xcode AppToken
+pub const USER_AGENT: &str = "akd/1.0 CFNetwork/808.1.4";
+pub const XCODE_UA: &str = "akd/1.0 CFNetwork/808.1.4";
+// Cấu hình chuẩn từ isideload: Pixel 7 (Android 14) + AuthKit akd
+// Khớp 100% chữ ký RINFO: 17106176 của Anisette v3 và có đầy đủ thẩm quyền GrandSlam
 pub const DEFAULT_CLIENT_INFO: &str =
-    "<iPhone16,1> <iOS;17.6.1;21G93> <com.apple.AuthKit/1 (com.apple.akd/1.0)>";
+    "<Pixel 7> <Android;14;UQ1A.240205.002> <com.apple.AuthKit/1 (com.apple.akd/1.0)>";
 
 pub const GSA_URL: &str = "https://gsa.apple.com/grandslam/GsService2";
 pub const GSA_VALIDATE_URL: &str = "https://gsa.apple.com/grandslam/GsService2/validate";
@@ -42,7 +43,7 @@ pub fn fix_client_info(raw_ci: &str) -> String {
     }
     // Apple GSA siết chặt: Nếu khai báo macOS từ server Anisette chạy trên Linux/Docker
     // hoặc có com.apple.dt.Xcode, máy chủ sẽ trả về lỗi -80045 do lệch vân tay phần cứng.
-    // Tự động patch sang profile iPhone 16 AuthKit akd để bypass 100% và tương thích Xcode auth.
+    // Tự động patch sang profile Pixel 7 AuthKit akd (chuẩn isideload) để bypass 100% và tương thích Xcode auth.
     if raw_ci.contains("macOS") {
         return DEFAULT_CLIENT_INFO.to_string();
     }

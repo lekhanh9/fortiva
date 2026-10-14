@@ -223,13 +223,16 @@ impl SrpFlow {
 
         eprintln!("[DBG-AUTH] auth_type = {:?}", auth_type);
 
+        let is_already_sent = hsc == 409 || spd_status == Some(409);
+
         if let Some(au) = &auth_type {
             if au.contains("SecondaryAuth") || au == "secondaryAuth" || au == "trustedDeviceSecondaryAuth" || au == "smsSecondaryAuth" {
                 println!("[srp] Yeu cau 2FA: {}", au);
 
-                // Delay 3s trước khi gửi 2FA — tránh Apple 403 vì request quá nhanh
-                println!("[srp] Chờ 3s trước khi gửi 2FA request...");
-                std::thread::sleep(std::time::Duration::from_secs(3));
+                if !is_already_sent {
+                    println!("[srp] Chờ 2s trước khi gửi 2FA request...");
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                }
 
                 let dsid = extract_string(&spd_data, &["adsid", "dsid"])
                     .or_else(|| extract_string(&status, &["dsid"]))
@@ -254,6 +257,7 @@ impl SrpFlow {
                     twofa,
                     &mut gsa.anisette,
                     au,
+                    is_already_sent,
                     &dsid,
                     &idms_token,
                     &gsa.user_id.clone(),
@@ -268,8 +272,8 @@ impl SrpFlow {
                 if depth >= 1 {
                     println!("[srp] Da retry 2FA roi, tiep tuc (khong retry nua)");
                 } else {
-                    println!("[srp] 2FA OK, retry login sau 3s...");
-                    std::thread::sleep(std::time::Duration::from_secs(3));
+                    println!("[srp] 2FA OK, dang nhap lai de cap nhat quyen phien...");
+                    std::thread::sleep(std::time::Duration::from_secs(2));
                     return self.authenticate(gsa, twofa, apple_id, password, depth + 1);
                 }
             }
@@ -359,13 +363,22 @@ impl SrpFlow {
         if ec == -22411 && allow_2fa {
             println!("\n[srp] 📱 Apple đã gửi mã xác minh 2FA (-22411) tới thiết bị Apple của bạn!");
             use std::io::{self, Write};
-            print!("[2fa] Nhập mã 6 số hiển thị trên iPhone/iPad: ");
-            io::stdout().flush().ok();
-            let mut code = String::new();
-            io::stdin().read_line(&mut code).ok();
-            let code = code.trim().to_string();
+            for attempt in 1..=3 {
+                let prompt = if attempt == 1 {
+                    "[2fa] Nhập mã 6 số hiển thị trên iPhone/iPad: "
+                } else {
+                    "[2fa] Nhập lại mã 6 số từ iPhone/iPad: "
+                };
+                print!("{}", prompt);
+                io::stdout().flush().ok();
+                let mut code = String::new();
+                io::stdin().read_line(&mut code).ok();
+                let code = code.trim().to_string();
 
-            if !code.is_empty() {
+                if code.is_empty() {
+                    break;
+                }
+
                 println!("[2fa] Đang gửi mã 2FA xác thực với Apple...");
                 let mut verify_headers = twofa.build_2fa_headers(
                     &mut gsa.anisette,
@@ -389,7 +402,23 @@ impl SrpFlow {
 
                 match v_resp {
                     Ok(r) if r.status().is_success() => {
-                        println!("[2fa] Xác thực 2FA thành công! Đang lấy AppToken...");
+                        let bytes = r.bytes().unwrap_or_default();
+                        if let Ok(val) = plist::from_bytes::<Value>(&bytes) {
+                            let ec = val
+                                .as_dictionary()
+                                .and_then(|d| d.get("Response"))
+                                .and_then(|r| r.as_dictionary())
+                                .and_then(|d| d.get("Status"))
+                                .and_then(|s| s.as_dictionary())
+                                .and_then(|d| d.get("ec"))
+                                .and_then(plist_integer)
+                                .unwrap_or(0);
+                            if ec == -21669 {
+                                println!("[2fa] ❌ Mã xác minh không chính xác (-21669). Vui lòng thử lại!");
+                                continue;
+                            }
+                        }
+                        println!("[2fa] ✅ Xác thực 2FA thành công! Đang lấy AppToken...");
                         std::thread::sleep(Duration::from_secs(2));
                         return self.fetch_app_token(
                             gsa,

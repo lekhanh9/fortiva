@@ -1,5 +1,5 @@
 // src/auth/twofa/trusted.rs
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use plist::Value;
 use reqwest::header::HeaderValue;
 use std::time::Duration;
@@ -15,198 +15,94 @@ impl TrustedDeviceHandler {
         &self,
         twofa: &mut TwoFAHandler,
         anisette: &mut AnisetteClient,
+        already_sent: bool,
         dsid: &str,
         idms_token: &str,
         user_id: &str,
         device_id: &str,
         input_func: &dyn Fn(&str) -> String,
     ) -> Result<bool> {
-        println!("[2fa] Trusted device flow...");
-
         let headers = twofa.build_2fa_headers(anisette, dsid, idms_token, user_id, device_id)?;
 
+        // Nếu Apple đã tự động gửi push (HSC 409 theo chuẩn isideload)
+        if already_sent {
+            println!("[2fa] 📱 Apple đã tự động gửi mã xác minh 2FA tới thiết bị của bạn!");
+        } else {
+            println!("[2fa] Đang gửi yêu cầu push mã 2FA tới thiết bị tin cậy...");
+            let mut push_ok = false;
+            for attempt in 0..3 {
+                if attempt > 0 {
+                    std::thread::sleep(Duration::from_secs(2));
+                }
+
+                eprintln!("[DBG-RUST-2FA] === Attempt {}/3 ===", attempt + 1);
+                match twofa
+                    .client
+                    .get(TRUSTED_DEVICE_URL)
+                    .headers(headers.clone())
+                    .timeout(Duration::from_secs(15))
+                    .send()
+                {
+                    Ok(resp) => {
+                        let code = resp.status().as_u16();
+                        if code == 200 || code == 412 {
+                            println!("[2fa] Push sent (HTTP {})", code);
+                            push_ok = true;
+                            break;
+                        }
+                        println!("[2fa] HTTP {} (attempt {}/3)", code, attempt + 1);
+                    }
+                    Err(e) => {
+                        eprintln!("[DBG-RUST-2FA] error: {}", e);
+                    }
+                }
+            }
+
+            if !push_ok {
+                eprintln!("[DBG-RUST-2FA] Push không phản hồi 200/412, vẫn mở prompt nhập mã.");
+            }
+        }
+
         // ============================================================
-        //  DEBUG: in headers gửi đi (REDACTED)
+        //  Vòng lặp nhập mã & verify (cho phép thử lại tối đa 3 lần nếu sai mã -21669)
         // ============================================================
-        eprintln!("[DBG-RUST-2FA] === Request headers ===");
-        for (k, v) in headers.iter() {
-            let key_str = k.as_str().to_lowercase();
-            let val_str = v.to_str().unwrap_or("<binary>");
-            let shown = match key_str.as_str() {
-                "x-apple-identity-token"
-                | "x-apple-i-md"
-                | "x-apple-i-md-m"
-                | "x-apple-i-md-lu"
-                | "x-mme-device-id"
-                | "x-apple-i-dsid" => "<REDACTED>".to_string(),
-                _ => val_str.to_string(),
+        for attempt in 1..=3 {
+            let prompt = if attempt == 1 {
+                "[2fa] Nhập mã 6 số hiển thị trên iPhone/iPad: "
+            } else {
+                "[2fa] Nhập lại mã 6 số từ iPhone/iPad: "
             };
-            eprintln!("[DBG-RUST-2FA]   {}: {}", key_str, shown);
-        }
-        eprintln!("[DBG-RUST-2FA] ==========================");
-        // ============================================================
 
-        // ============================================================
-        //  BƯỚC 1: Test redirect — Client KHÔNG follow redirect
-        // ============================================================
-        {
-            let client_no_redirect = reqwest::blocking::Client::builder()
-                .danger_accept_invalid_certs(true)
-                .timeout(Duration::from_secs(15))
-                .pool_max_idle_per_host(0)
-                .no_proxy()
-                .http1_only()
-                .redirect(reqwest::redirect::Policy::none())
-                .build()?;
-
-            eprintln!("[DBG-RUST-2FA] === Test redirect (Policy::none) ===");
-            match client_no_redirect
-                .get(TRUSTED_DEVICE_URL)
-                .headers(headers.clone())
-                .send()
-            {
-                Ok(resp) => {
-                    let status = resp.status();
-                    let version = resp.version();
-                    let url = resp.url().clone();
-                    let resp_headers = resp.headers().clone();
-                    let body = resp.bytes()?;
-
-                    eprintln!("[DBG-RUST-2FA] status={}", status);
-                    eprintln!("[DBG-RUST-2FA] version={:?}", version);
-                    eprintln!("[DBG-RUST-2FA] url={}", url);
-                    eprintln!("[DBG-RUST-2FA] --- response headers ---");
-                    for (k, v) in resp_headers.iter() {
-                        eprintln!("[DBG-RUST-2FA]   {}: {:?}", k, v);
-                    }
-                    eprintln!("[DBG-RUST-2FA] body_len={}", body.len());
-                    eprintln!(
-                        "[DBG-RUST-2FA] body={}",
-                        String::from_utf8_lossy(&body[..body.len().min(500)])
-                    );
-
-                    // Nếu có Location header → có redirect
-                    if let Some(loc) = resp_headers.get("location") {
-                        eprintln!("[DBG-RUST-2FA] REDIRECT detected → {:?}", loc);
-                    }
-                }
-                Err(e) => {
-                    eprintln!("[DBG-RUST-2FA] redirect test error: {}", e);
-                }
-            }
-            eprintln!("[DBG-RUST-2FA] ==========================");
-        }
-
-        // ============================================================
-        //  BƯỚC 2: Send push 2FA (client thường, follow redirect)
-        // ============================================================
-        let mut success = false;
-
-        for attempt in 0..3 {
-            if attempt > 0 {
-                std::thread::sleep(Duration::from_secs(2));
+            let code = input_func(prompt).trim().to_string();
+            if code.is_empty() {
+                println!("[2fa] Đã hủy nhập mã.");
+                return Ok(false);
             }
 
-            eprintln!("[DBG-RUST-2FA] === Attempt {}/3 ===", attempt + 1);
+            let mut verify_headers = twofa.build_2fa_headers(
+                anisette, dsid, idms_token, user_id, device_id,
+            )?;
+            verify_headers.insert(
+                "security-code",
+                HeaderValue::from_str(&code)?,
+            );
 
-            match twofa
+            eprintln!("[DBG-RUST-2FA] === Verify code (lần {}/3) ===", attempt);
+            eprintln!("[DBG-RUST-2FA] url={}", GSA_VALIDATE_URL);
+
+            let resp = twofa
                 .client
-                .get(TRUSTED_DEVICE_URL)
-                .headers(headers.clone())
+                .post(GSA_VALIDATE_URL)
+                .headers(verify_headers)
+                .body("")
                 .timeout(Duration::from_secs(15))
-                .send()
-            {
-                Ok(resp) => {
-                    let status = resp.status();
-                    let version = resp.version();
-                    let url = resp.url().clone();
-                    let resp_headers = resp.headers().clone();
-                    let body = resp.bytes()?;
+                .send()?;
 
-                    eprintln!("[DBG-RUST-2FA] status={}", status);
-                    eprintln!("[DBG-RUST-2FA] version={:?}", version);
-                    eprintln!("[DBG-RUST-2FA] url={}", url);
-                    eprintln!("[DBG-RUST-2FA] --- response headers ---");
-                    for (k, v) in resp_headers.iter() {
-                        eprintln!("[DBG-RUST-2FA]   {}: {:?}", k, v);
-                    }
-                    eprintln!("[DBG-RUST-2FA] body_len={}", body.len());
-                    eprintln!(
-                        "[DBG-RUST-2FA] body={}",
-                        String::from_utf8_lossy(&body[..body.len().min(500)])
-                    );
+            let status = resp.status();
+            let body = resp.bytes()?;
 
-                    let code = status.as_u16();
-                    if code == 200 || code == 412 {
-                        println!("[2fa] Push sent (HTTP {})", code);
-                        success = true;
-                        break;
-                    }
-                    println!("[2fa] HTTP {} (attempt {}/3)", code, attempt + 1);
-                }
-                Err(e) => {
-                    eprintln!("[DBG-RUST-2FA] error: {}", e);
-                    println!("[2fa] Push loi: {} (attempt {}/3)", e, attempt + 1);
-                    if attempt == 2 {
-                        return Err(anyhow!("Trusted device push failed"));
-                    }
-                }
-            }
-        }
-
-        if !success {
-            eprintln!("[DBG-RUST-2FA] Push không thành công sau 3 lần");
-            // Vẫn cho user nhập mã (Apple có thể gửi push dù status không phải 200/412)
-        }
-
-        // ============================================================
-        //  BƯỚC 3: User nhập mã 6 số
-        // ============================================================
-        let code = input_func("[2fa] Nhap ma 6 so tu iPhone: ").trim().to_string();
-        if code.is_empty() {
-            return Ok(false);
-        }
-
-        // ============================================================
-        //  BƯỚC 4: Verify code
-        // ============================================================
-        let mut verify_headers = twofa.build_2fa_headers(
-            anisette, dsid, idms_token, user_id, device_id,
-        )?;
-        verify_headers.insert(
-            "security-code",
-            HeaderValue::from_str(&code)?,
-        );
-
-        eprintln!("[DBG-RUST-2FA] === Verify code ===");
-        eprintln!("[DBG-RUST-2FA] url={}", GSA_VALIDATE_URL);
-
-        let resp = twofa
-            .client
-            .post(GSA_VALIDATE_URL)
-            .headers(verify_headers)
-            .body("")
-            .timeout(Duration::from_secs(15))
-            .send()?;
-
-        let status = resp.status();
-        let version = resp.version();
-        let url = resp.url().clone();
-        let _resp_headers = resp.headers().clone();
-        let body = resp.bytes()?;
-
-        eprintln!("[DBG-RUST-2FA] status={}", status);
-        eprintln!("[DBG-RUST-2FA] version={:?}", version);
-        eprintln!("[DBG-RUST-2FA] url={}", url);
-        eprintln!("[DBG-RUST-2FA] body_len={}", body.len());
-        eprintln!(
-            "[DBG-RUST-2FA] body={}",
-            String::from_utf8_lossy(&body[..body.len().min(500)])
-        );
-
-        if status.is_success() {
-            match plist::from_bytes::<Value>(&body) {
-                Ok(val) => {
+            if status.is_success() {
+                if let Ok(val) = plist::from_bytes::<Value>(&body) {
                     let ec = val
                         .as_dictionary()
                         .and_then(|d| d.get("Response"))
@@ -218,19 +114,24 @@ impl TrustedDeviceHandler {
                         .unwrap_or(0);
 
                     if ec == 0 {
-                        println!("[2fa] Trusted device OK!");
+                        println!("[2fa] ✅ Xác thực 2FA thành công!");
                         return Ok(true);
+                    } else if ec == -21669 {
+                        println!("[2fa] ❌ Mã xác minh không chính xác (-21669). Vui lòng thử lại!");
+                        continue;
+                    } else {
+                        eprintln!("[2fa] Validate phản hồi ec={}", ec);
                     }
-                    eprintln!("[2fa] ec={}", ec);
-                }
-                Err(_) => {
-                    println!("[2fa] HTTP OK (khong parse duoc plist)");
+                } else {
+                    println!("[2fa] ✅ Xác thực 2FA thành công (HTTP {})", status);
                     return Ok(true);
                 }
+            } else {
+                eprintln!("[2fa] HTTP lỗi xác thực: {}", status);
             }
         }
 
-        eprintln!("[2fa] Fail: {}", status);
+        eprintln!("[2fa] Xác thực 2FA thất bại sau 3 lần thử.");
         Ok(false)
     }
 }

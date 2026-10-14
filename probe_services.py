@@ -81,8 +81,15 @@ ANISETTE_SERVERS = [
 # Client-Info Profiles
 CLIENT_PROFILES = [
     {
+        "id": "pixel7_akd",
+        "name": "Pixel 7 Android 14 (AuthKit akd) [Chuẩn iLoader / isideload]",
+        "client_info": "<Pixel 7> <Android;14;UQ1A.240205.002> <com.apple.AuthKit/1 (com.apple.akd/1.0)>",
+        "user_agent": "akd/1.0 CFNetwork/808.1.4",
+        "svct": "iCloud"
+    },
+    {
         "id": "iphone16_akd",
-        "name": "iPhone 16 iOS 17.6 (AuthKit akd) [Chuẩn Apple ID & Developer]",
+        "name": "iPhone 16 iOS 17.6 (AuthKit akd) [Apple ID & Developer]",
         "client_info": "<iPhone16,1> <iOS;17.6.1;21G93> <com.apple.AuthKit/1 (com.apple.akd/1.0)>",
         "user_agent": "akd/1.0 CFNetwork/1496.0.7 Darwin/23.5.0",
         "svct": "iCloud"
@@ -379,16 +386,15 @@ def gsa_request(params: dict, client_info: str, ani: dict, ua: str, svct: str = 
 #   2FA HANDLERS (TRUSTED DEVICE & SMS)
 # =============================================================================
 
-def handle_trusted_device_2fa(ani: dict, client_info: str, dsid: str, idms_token: str) -> bool:
+def handle_trusted_device_2fa(ani: dict, client_info: str, dsid: str, idms_token: str, already_sent: bool = False) -> bool:
     """Gửi Push 2FA đến các thiết bị Apple tin cậy và xác thực mã 6 số"""
-    print(f"\n{C_CYAN}[2FA] Đang gửi yêu cầu Push mã 2FA tới thiết bị Apple tin cậy...{C_RESET}")
     device_id = ani.get("X-Mme-Device-Id", str(uuid.uuid4()).upper())
     identity_token = base64.b64encode(f"{dsid}:{idms_token}".encode()).decode()
 
     headers = {
         "Content-Type": "text/x-xml-plist",
         "Accept": "text/x-xml-plist",
-        "User-Agent": "akd/1.0 CFNetwork/1496.0.7 Darwin/23.5.0",
+        "User-Agent": "akd/1.0 CFNetwork/808.1.4",
         "Accept-Language": "en-us",
         "X-Apple-Identity-Token": identity_token,
         "X-Apple-App-Info": APP_XCODE_AUTH,
@@ -409,60 +415,70 @@ def handle_trusted_device_2fa(ani: dict, client_info: str, dsid: str, idms_token
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
 
-    push_sent = False
-    for attempt in range(3):
-        try:
-            req = urllib.request.Request(TRUSTED_DEVICE_URL, headers=headers)
-            with urllib.request.urlopen(req, context=ctx, timeout=15) as resp:
-                if resp.status in (200, 412):
-                    print(f"{C_GREEN}[+] Đã gửi tín hiệu Push 2FA thành công!{C_RESET}")
+    if already_sent:
+        print(f"\n{C_MAGENTA}{C_BOLD}[2FA] 📱 Apple đã tự động gửi mã xác minh 2FA tới thiết bị Apple của bạn!{C_RESET}")
+    else:
+        print(f"\n{C_CYAN}[2FA] Đang gửi yêu cầu Push mã 2FA tới thiết bị Apple tin cậy...{C_RESET}")
+        push_sent = False
+        for attempt in range(3):
+            try:
+                req = urllib.request.Request(TRUSTED_DEVICE_URL, headers=headers)
+                with urllib.request.urlopen(req, context=ctx, timeout=15) as resp:
+                    if resp.status in (200, 412):
+                        print(f"{C_GREEN}[+] Đã gửi tín hiệu Push 2FA thành công!{C_RESET}")
+                        push_sent = True
+                        break
+            except urllib.error.HTTPError as e:
+                if e.code in (200, 412):
                     push_sent = True
                     break
-        except urllib.error.HTTPError as e:
-            if e.code in (200, 412):
-                push_sent = True
-                break
-            time.sleep(2)
-        except Exception:
-            time.sleep(2)
+                time.sleep(2)
+            except Exception:
+                time.sleep(2)
 
-    if not push_sent:
-        print(f"{C_YELLOW}[!] Push có thể đã gửi (hoặc kiểm tra thiết bị iPhone/iPad/Mac của bạn){C_RESET}")
+        if not push_sent:
+            print(f"{C_YELLOW}[!] Push có thể đã gửi (hoặc kiểm tra thiết bị iPhone/iPad/Mac của bạn){C_RESET}")
 
-    code = input(f"{C_BOLD}{C_YELLOW}[?] Nhập mã 6 số hiển thị trên thiết bị Apple của bạn: {C_RESET}").strip()
-    if not code:
-        print(f"{C_RED}[-] Bạn chưa nhập mã 2FA.{C_RESET}")
-        return False
+    # Vòng lặp nhập mã (cho phép thử lại tối đa 3 lần nếu nhập sai mã)
+    for attempt in range(1, 4):
+        prompt = "[?] Nhập mã 6 số hiển thị trên thiết bị Apple: " if attempt == 1 else "[?] Nhập lại mã 6 số: "
+        code = input(f"{C_BOLD}{C_YELLOW}{prompt}{C_RESET}").strip()
+        if not code:
+            print(f"{C_RED}[-] Đã hủy nhập mã 2FA.{C_RESET}")
+            return False
 
-    # Xác thực mã 2FA
-    verify_headers = dict(headers)
-    verify_headers["security-code"] = code
+        verify_headers = dict(headers)
+        verify_headers["security-code"] = code
 
-    try:
-        req = urllib.request.Request(GSA_VALIDATE_URL, data=b"", headers=verify_headers)
-        with urllib.request.urlopen(req, context=ctx, timeout=15) as resp:
-            resp_body = resp.read()
-            wrapped = ensure_plist_wrapper(resp_body)
-            parsed = plistlib.loads(wrapped)
-            ec = parsed.get("Response", {}).get("Status", {}).get("ec", 0)
-            if ec == 0 or resp.status == 200:
-                print(f"{C_GREEN}[+] Xác thực mã 2FA thành công!{C_RESET}")
-                return True
-    except urllib.error.HTTPError as e:
-        body = e.read()
         try:
-            parsed = plistlib.loads(ensure_plist_wrapper(body))
-            ec = parsed.get("Response", {}).get("Status", {}).get("ec", 0)
-            if ec == 0:
-                print(f"{C_GREEN}[+] Xác thực mã 2FA thành công!{C_RESET}")
-                return True
-        except Exception:
-            pass
-        print(f"{C_RED}[-] Mã 2FA không chính xác hoặc hết hạn (HTTP {e.code}).{C_RESET}")
-        return False
-    except Exception as e:
-        print(f"{C_RED}[-] Lỗi xác thực 2FA: {e}{C_RESET}")
-        return False
+            req = urllib.request.Request(GSA_VALIDATE_URL, data=b"", headers=verify_headers)
+            with urllib.request.urlopen(req, context=ctx, timeout=15) as resp:
+                resp_body = resp.read()
+                wrapped = ensure_plist_wrapper(resp_body)
+                parsed = plistlib.loads(wrapped)
+                ec = parsed.get("Response", {}).get("Status", {}).get("ec", 0)
+                if ec == 0 or resp.status == 200:
+                    print(f"{C_GREEN}{C_BOLD}[+] Xác thực mã 2FA thành công!{C_RESET}")
+                    return True
+                elif ec == -21669:
+                    print(f"{C_RED}[-] Mã xác minh 2FA không chính xác (-21669). Vui lòng thử lại!{C_RESET}")
+                    continue
+        except urllib.error.HTTPError as e:
+            body = e.read()
+            try:
+                parsed = plistlib.loads(ensure_plist_wrapper(body))
+                ec = parsed.get("Response", {}).get("Status", {}).get("ec", 0)
+                if ec == 0:
+                    print(f"{C_GREEN}{C_BOLD}[+] Xác thực mã 2FA thành công!{C_RESET}")
+                    return True
+                elif ec == -21669:
+                    print(f"{C_RED}[-] Mã xác minh 2FA không chính xác (-21669). Vui lòng thử lại!{C_RESET}")
+                    continue
+            except Exception:
+                pass
+            print(f"{C_RED}[-] Lỗi xác thực (HTTP {e.code}).{C_RESET}")
+        except Exception as e:
+            print(f"{C_RED}[-] Lỗi kết nối 2FA: {e}{C_RESET}")
 
     return False
 
@@ -634,18 +650,19 @@ def perform_srp_login(username: str, password: str, profile: dict, depth: int = 
         if not dsid or not idms_token:
             raise RuntimeError("Thiếu DSID hoặc IDMS-Token để thực hiện bước 2FA!")
 
-        # Delay 2s tránh cờ Apple spam
-        time.sleep(2)
+        already_sent = (hsc == 409 or spd_status == 409)
+        if not already_sent:
+            time.sleep(2)
 
-        twofa_ok = handle_trusted_device_2fa(ani, client_info, dsid, idms_token)
+        twofa_ok = handle_trusted_device_2fa(ani, client_info, dsid, idms_token, already_sent=already_sent)
         if not twofa_ok:
             raise RuntimeError("Xác thực 2FA không thành công.")
 
         if depth >= 1:
             print(f"{C_YELLOW}[*] Đã hoàn tất xác thực 2FA.{C_RESET}")
         else:
-            print(f"{C_CYAN}[*] 2FA OK! Tự động kết nối lại sau 3s để lấy phiên đăng nhập...{C_RESET}")
-            time.sleep(3)
+            print(f"{C_CYAN}[*] 2FA OK! Tự động đăng nhập lại sau 2s để lấy token phiên...{C_RESET}")
+            time.sleep(2)
             return perform_srp_login(username, password, profile, depth=depth + 1)
 
     # 7. Trích xuất thông tin phiên đăng nhập
