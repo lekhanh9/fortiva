@@ -23,13 +23,13 @@ pub const PHONE_CODE_URL: &str = "https://gsa.apple.com/auth/verify/phone/securi
 pub const APP_XCODE_AUTH: &str = "com.apple.gs.xcode.auth";
 
 pub const FALLBACK_IOS_CLIENT_INFO: &str =
-    "<iPhone16,1> <iOS;17.6.1;21G93> <com.apple.AuthKit/1 (com.apple.akd/1.0)>";
+        "Pixel 8 Pro> <Android;14;UP1A.231005.007> <com.apple.AuthKit/1 (com.apple.android.music/4.6.0 (1320)>";
 
 /// Client-Info chuẩn chính chủ Apple Developer App trên iOS 17.6 cho Developer Services API
 pub const DEVELOPER_CLIENT_INFO: &str =
-    "<iPhone16,1> <iOS;17.6.1;21G93> <com.apple.Developer/10.4 (10.4.0)>";
+    "Pixel 8 Pro> <Android;14;UP1A.231005.007> <com.apple.AuthKit/1 (com.apple.android.music/4.6.0 (1320)>";
 pub const DEVELOPER_USER_AGENT: &str =
-    "Developer/10.4 (com.apple.Developer; build:10.4.0; iOS 17.6.1) Alamofire/5.4.0";
+    "AppleMusic/4.6.0 (com.apple.android.music; Android 14; Pixel 8 Pro)";
 
 pub fn cookie_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
