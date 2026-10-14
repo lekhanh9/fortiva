@@ -3,12 +3,12 @@
 =============================================================================
   🍎 APPLE GRANDSLAM GSA - CLIENT-INFO PROBER & SRP AUTHENTICATOR
 =============================================================================
-Công cụ 2-trong-1:
-  1. QUÉT (Probe): Kiểm tra tương thích Client-Info / Services với Apple GSA
-                   mà KHÔNG CẦN nhập mật khẩu.
-  2. ĐĂNG NHẬP (Login): Xác thực tài khoản Apple ID hoàn chỉnh bằng giao thức
-                        GrandSlam SRP-6a, hỗ trợ 2FA (Trusted Device & SMS)
-                        và giải mã lấy Session Token / Xcode AppToken.
+2-in-1 Toolkit:
+  1. PROBE: Test Client-Info & Services compatibility with Apple GSA
+            WITHOUT requiring a password.
+  2. LOGIN: Complete Apple ID authentication using GrandSlam SRP-6a protocol,
+            supporting 2FA (Trusted Device & SMS) and decrypting session
+            tokens as well as Xcode AppTokens.
 =============================================================================
 """
 
@@ -29,7 +29,7 @@ import urllib.request
 import urllib.error
 import secrets
 
-# Kiểm tra thư viện cryptography để giải mã SPD (CBC) và AppToken (GCM)
+# Check for cryptography library to decrypt SPD (CBC) and AppToken (GCM)
 try:
     from cryptography.hazmat.primitives import padding
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -82,7 +82,7 @@ ANISETTE_SERVERS = [
 CLIENT_PROFILES = [
     {
         "id": "pixel7_akd",
-        "name": "Pixel 7 Android 14 (AuthKit akd) [Chuẩn iLoader / isideload]",
+        "name": "Pixel 7 Android 14 (AuthKit akd) [Standard iLoader / isideload]",
         "client_info": "<Pixel 7> <Android;14;UQ1A.240205.002> <com.apple.AuthKit/1 (com.apple.akd/1.0)>",
         "user_agent": "akd/1.0 CFNetwork/808.1.4",
         "svct": "iCloud"
@@ -124,7 +124,7 @@ CLIENT_PROFILES = [
     }
 ]
 
-# Danh sách kiểm tra probe
+# Probe candidate list
 PROBE_CANDIDATES = [
     ("Apple Developer App (iOS 17)", 
      "<iPhone16,1> <iOS;17.6.1;21G93> <com.apple.Developer/10.4 (10.4.0)>", 
@@ -178,11 +178,11 @@ PROBE_CANDIDATES = [
      "<iPhone15,4> <iOS;17.5.1;21F90> <com.apple.AuthKit/1 (com.apple.akd/1.0)>", 
      "akd/1.0 CFNetwork/1496.0.7 Darwin/23.5.0", "iCloud"),
 
-    ("Xcode 16 Native (macOS 15) [Đối chiếu]", 
+    ("Xcode 16 Native (macOS 15) [Reference]", 
      "<MacBookPro18,1> <macOS;15.0;24A335> <com.apple.dt.Xcode/16.0 (16A242d)>", 
      "Xcode/16.0 (16A242d)", "iCloud"),
 
-    ("macOS 14.5 Safari [Đối chiếu]", 
+    ("macOS 14.5 Safari [Reference]", 
      "<MacBookPro18,1> <macOS;14.5;23F79> <com.apple.akd/1.0 (com.apple.akd/1.0)>", 
      "akd/1.0 CFNetwork/1496.0.7 Darwin/23.5.0", "iCloud"),
 ]
@@ -193,7 +193,7 @@ PROBE_CANDIDATES = [
 # =============================================================================
 
 def pad_to_n(val) -> bytes:
-    """Pad integer hoặc bytes về đúng 256 bytes (N_LEN)"""
+    """Pad integer or bytes to exactly 256 bytes (N_LEN)"""
     if isinstance(val, int):
         val_bytes = val.to_bytes((val.bit_length() + 7) // 8, byteorder="big")
     elif isinstance(val, bytes):
@@ -203,12 +203,12 @@ def pad_to_n(val) -> bytes:
     return val_bytes.rjust(256, b"\x00")
 
 def natural_bytes(val_int: int) -> bytes:
-    """Lấy big-endian bytes tự nhiên không chứa số 0 padding dư thừa"""
+    """Get natural big-endian bytes without redundant zero padding"""
     length = (val_int.bit_length() + 7) // 8
     return val_int.to_bytes(max(1, length), byteorder="big")
 
 def extract_bytes(val) -> bytes:
-    """Trích xuất bytes từ bytes hoặc chuỗi base64"""
+    """Extract raw bytes from bytes or base64 string"""
     if val is None:
         return b""
     if isinstance(val, bytes):
@@ -221,7 +221,7 @@ def extract_bytes(val) -> bytes:
     return bytes(val)
 
 def to_string(v) -> str:
-    """Chuyển đổi linh hoạt giá trị từ Plist (str, bytes, int) sang chuỗi sạch"""
+    """Convert plist value (str, bytes, int) to clean string"""
     if v is None:
         return ""
     if isinstance(v, str):
@@ -234,7 +234,7 @@ def to_string(v) -> str:
     return str(v)
 
 def ensure_plist_wrapper(data: bytes) -> bytes:
-    """Bọc thẻ plist XML nếu server trả về thiếu wrapper ngoài cùng"""
+    """Wrap in plist XML tags if server returned unwrapped payload"""
     stripped = data.strip()
     if stripped.startswith(b"<?xml") or stripped.startswith(b"bplist"):
         return data
@@ -249,7 +249,7 @@ def ensure_plist_wrapper(data: bytes) -> bytes:
     return header + data + footer
 
 def fetch_anisette():
-    """Lấy Anisette headers từ các server dự phòng"""
+    """Fetch Anisette headers from available servers with fallback"""
     for server in ANISETTE_SERVERS:
         try:
             req = urllib.request.urlopen(server, timeout=8)
@@ -258,7 +258,7 @@ def fetch_anisette():
                 return data, server
         except Exception:
             continue
-    raise RuntimeError("Không thể kết nối đến bất kỳ Anisette server nào!")
+    raise RuntimeError("Failed to connect to any Anisette server!")
 
 
 # =============================================================================
@@ -266,9 +266,9 @@ def fetch_anisette():
 # =============================================================================
 
 def decrypt_cbc(session_key: bytes, data: bytes) -> bytes:
-    """Giải mã payload SPD bằng AES-256-CBC và unpad PKCS7"""
+    """Decrypt SPD payload with AES-256-CBC and unpad PKCS7"""
     if not HAS_CRYPTOGRAPHY:
-        raise RuntimeError("Cần cài cryptography (pip install cryptography) để giải mã SPD")
+        raise RuntimeError("Cryptography library required (pip install cryptography) to decrypt SPD")
     
     key = hmac.new(session_key, b"extra data key:", hashlib.sha256).digest()
     iv = hmac.new(session_key, b"extra data iv:", hashlib.sha256).digest()[:16]
@@ -287,17 +287,17 @@ def decrypt_cbc(session_key: bytes, data: bytes) -> bytes:
         return padded
 
 def decrypt_gcm(sk: bytes, encrypted_data: bytes) -> bytes:
-    """Giải mã AppToken et bằng AES-256-GCM (Apple dùng nonce 16-byte và AAD='XYZ')"""
+    """Decrypt AppToken et with AES-256-GCM (Apple uses 16-byte nonce and AAD='XYZ')"""
     if not HAS_CRYPTOGRAPHY:
-        raise RuntimeError("Cần cài cryptography (pip install cryptography) để giải mã AppToken")
+        raise RuntimeError("Cryptography library required (pip install cryptography) to decrypt AppToken")
     
     if len(encrypted_data) < 35:
-        raise ValueError(f"Dữ liệu mã hóa quá ngắn ({len(encrypted_data)} bytes)")
+        raise ValueError(f"Encrypted data too short ({len(encrypted_data)} bytes)")
     if encrypted_data[:3] != b"XYZ":
-        raise ValueError(f"Tiền tố token không hợp lệ (cần 'XYZ'): {encrypted_data[:3]}")
+        raise ValueError(f"Invalid token prefix (expected 'XYZ'): {encrypted_data[:3]}")
 
     aad = encrypted_data[:3]
-    iv = encrypted_data[3:19]  # 16 bytes nonce
+    iv = encrypted_data[3:19]  # 16-byte nonce
     ciphertext = encrypted_data[19:-16]
     tag = encrypted_data[-16:]
 
@@ -312,7 +312,7 @@ def decrypt_gcm(sk: bytes, encrypted_data: bytes) -> bytes:
 # =============================================================================
 
 def gsa_request(params: dict, client_info: str, ani: dict, ua: str, svct: str = "iCloud", extra_headers: dict = None, retries: int = 3) -> dict:
-    """Gửi request XML Plist lên GSA endpoint và trả về dict 'Response'"""
+    """Send XML Plist request to GSA endpoint and return 'Response' dict"""
     op = params.get("o", "?")
     device_id = ani.get("X-Mme-Device-Id", str(uuid.uuid4()).upper())
     user_id = str(uuid.uuid4()).upper()
@@ -354,7 +354,7 @@ def gsa_request(params: dict, client_info: str, ani: dict, ua: str, svct: str = 
         "Accept": "*/*",
         "User-Agent": ua,
         "X-Mme-Client-Info": client_info,
-        "Connection": "close"  # Đóng kết nối tránh 429 rate limit
+        "Connection": "close"  # Close connection to mitigate rate limits
     }
     if extra_headers:
         headers.update(extra_headers)
@@ -376,7 +376,7 @@ def gsa_request(params: dict, client_info: str, ani: dict, ua: str, svct: str = 
         except urllib.error.HTTPError as e:
             err_body = e.read()
             if e.code == 429:
-                print(f"{C_YELLOW}[!] GSA báo HTTP 429 (Rate limit) - Chờ 10s... ({attempt + 1}/{effective_retries}){C_RESET}")
+                print(f"{C_YELLOW}[!] GSA reported HTTP 429 (Rate limit) - Waiting 10s... ({attempt + 1}/{effective_retries}){C_RESET}")
                 time.sleep(10)
                 continue
             try:
@@ -394,7 +394,7 @@ def gsa_request(params: dict, client_info: str, ani: dict, ua: str, svct: str = 
                 raise
             time.sleep(2)
 
-    raise RuntimeError(f"GSA request '{op}' thất bại sau {effective_retries} lần thử")
+    raise RuntimeError(f"GSA request '{op}' failed after {effective_retries} attempts")
 
 
 # =============================================================================
@@ -402,7 +402,7 @@ def gsa_request(params: dict, client_info: str, ani: dict, ua: str, svct: str = 
 # =============================================================================
 
 def handle_trusted_device_2fa(ani: dict, client_info: str, dsid: str, idms_token: str, already_sent: bool = False) -> bool:
-    """Gửi Push 2FA đến các thiết bị Apple tin cậy và xác thực mã 6 số"""
+    """Send 2FA Push notification to trusted Apple devices and verify 6-digit code"""
     device_id = ani.get("X-Mme-Device-Id", str(uuid.uuid4()).upper())
     identity_token = base64.b64encode(f"{dsid}:{idms_token}".encode()).decode()
 
@@ -431,16 +431,16 @@ def handle_trusted_device_2fa(ani: dict, client_info: str, dsid: str, idms_token
     ctx.verify_mode = ssl.CERT_NONE
 
     if already_sent:
-        print(f"\n{C_MAGENTA}{C_BOLD}[2FA] 📱 Apple đã tự động gửi mã xác minh 2FA tới thiết bị Apple của bạn!{C_RESET}")
+        print(f"\n{C_MAGENTA}{C_BOLD}[2FA] 📱 Apple automatically sent a 2FA verification code to your Apple device!{C_RESET}")
     else:
-        print(f"\n{C_CYAN}[2FA] Đang gửi yêu cầu Push mã 2FA tới thiết bị Apple tin cậy...{C_RESET}")
+        print(f"\n{C_CYAN}[2FA] Requesting 2FA Push notification to trusted Apple devices...{C_RESET}")
         push_sent = False
         for attempt in range(3):
             try:
                 req = urllib.request.Request(TRUSTED_DEVICE_URL, headers=headers)
                 with urllib.request.urlopen(req, context=ctx, timeout=15) as resp:
                     if resp.status in (200, 412):
-                        print(f"{C_GREEN}[+] Đã gửi tín hiệu Push 2FA thành công!{C_RESET}")
+                        print(f"{C_GREEN}[+] 2FA Push request sent successfully!{C_RESET}")
                         push_sent = True
                         break
             except urllib.error.HTTPError as e:
@@ -452,14 +452,14 @@ def handle_trusted_device_2fa(ani: dict, client_info: str, dsid: str, idms_token
                 time.sleep(2)
 
         if not push_sent:
-            print(f"{C_YELLOW}[!] Push có thể đã gửi (hoặc kiểm tra thiết bị iPhone/iPad/Mac của bạn){C_RESET}")
+            print(f"{C_YELLOW}[!] Push notification may have been sent (please check your iPhone/iPad/Mac){C_RESET}")
 
-    # Vòng lặp nhập mã (cho phép thử lại tối đa 3 lần nếu nhập sai mã)
+    # Code input loop (allows up to 3 attempts on incorrect code)
     for attempt in range(1, 4):
-        prompt = "[?] Nhập mã 6 số hiển thị trên thiết bị Apple: " if attempt == 1 else "[?] Nhập lại mã 6 số: "
+        prompt = "[?] Enter 6-digit code shown on Apple device: " if attempt == 1 else "[?] Re-enter 6-digit code: "
         code = input(f"{C_BOLD}{C_YELLOW}{prompt}{C_RESET}").strip()
         if not code:
-            print(f"{C_RED}[-] Đã hủy nhập mã 2FA.{C_RESET}")
+            print(f"{C_RED}[-] 2FA verification cancelled.{C_RESET}")
             return False
 
         verify_headers = dict(headers)
@@ -473,10 +473,10 @@ def handle_trusted_device_2fa(ani: dict, client_info: str, dsid: str, idms_token
                 parsed = plistlib.loads(wrapped)
                 ec = parsed.get("Response", {}).get("Status", {}).get("ec", 0)
                 if ec == 0 or resp.status == 200:
-                    print(f"{C_GREEN}{C_BOLD}[+] Xác thực mã 2FA thành công!{C_RESET}")
+                    print(f"{C_GREEN}{C_BOLD}[+] 2FA verification successful!{C_RESET}")
                     return True
                 elif ec == -21669:
-                    print(f"{C_RED}[-] Mã xác minh 2FA không chính xác (-21669). Vui lòng thử lại!{C_RESET}")
+                    print(f"{C_RED}[-] Incorrect 2FA verification code (-21669). Please try again!{C_RESET}")
                     continue
         except urllib.error.HTTPError as e:
             body = e.read()
@@ -484,16 +484,16 @@ def handle_trusted_device_2fa(ani: dict, client_info: str, dsid: str, idms_token
                 parsed = plistlib.loads(ensure_plist_wrapper(body))
                 ec = parsed.get("Response", {}).get("Status", {}).get("ec", 0)
                 if ec == 0:
-                    print(f"{C_GREEN}{C_BOLD}[+] Xác thực mã 2FA thành công!{C_RESET}")
+                    print(f"{C_GREEN}{C_BOLD}[+] 2FA verification successful!{C_RESET}")
                     return True
                 elif ec == -21669:
-                    print(f"{C_RED}[-] Mã xác minh 2FA không chính xác (-21669). Vui lòng thử lại!{C_RESET}")
+                    print(f"{C_RED}[-] Incorrect 2FA verification code (-21669). Please try again!{C_RESET}")
                     continue
             except Exception:
                 pass
-            print(f"{C_RED}[-] Lỗi xác thực (HTTP {e.code}).{C_RESET}")
+            print(f"{C_RED}[-] Verification error (HTTP {e.code}).{C_RESET}")
         except Exception as e:
-            print(f"{C_RED}[-] Lỗi kết nối 2FA: {e}{C_RESET}")
+            print(f"{C_RED}[-] 2FA connection error: {e}{C_RESET}")
 
     return False
 
@@ -503,31 +503,31 @@ def handle_trusted_device_2fa(ani: dict, client_info: str, dsid: str, idms_token
 # =============================================================================
 
 def perform_srp_login(username: str, password: str, profile: dict, depth: int = 0) -> dict:
-    """Thực hiện chu trình đăng nhập GrandSlam SRP-6a hoàn chỉnh"""
+    """Execute complete GrandSlam SRP-6a login workflow"""
     if depth > 0:
-        print(f"\n{C_CYAN}[*] Tiếp tục hoàn tất đăng nhập sau 2FA (lần {depth})...{C_RESET}")
+        print(f"\n{C_CYAN}[*] Continuing authentication after 2FA (attempt {depth})...{C_RESET}")
     else:
-        print(f"\n{C_BOLD}{C_BLUE}[*] Bắt đầu xác thực Apple ID: {username}{C_RESET}")
-        print(f"[*] Cấu hình Client-Info: {profile['name']}")
+        print(f"\n{C_BOLD}{C_BLUE}[*] Starting Apple ID authentication: {username}{C_RESET}")
+        print(f"[*] Client-Info profile: {profile['name']}")
 
-    # 1. Lấy Anisette
-    print("[*] Đang kết nối lấy Anisette headers...")
+    # 1. Fetch Anisette headers
+    print("[*] Connecting to fetch Anisette headers...")
     ani, ani_url = fetch_anisette()
-    print(f"{C_GREEN}[+] Kết nối Anisette thành công: {ani_url}{C_RESET}")
+    print(f"{C_GREEN}[+] Anisette connection successful: {ani_url}{C_RESET}")
 
     client_info = profile["client_info"]
     ua = profile["user_agent"]
     svct = profile["svct"]
 
-    # 2. Sinh cặp khóa công khai SRP A
-    # a: số ngẫu nhiên 256 bits (32 bytes)
+    # 2. Generate SRP public key pair A
+    # a: 256 bits random number (32 bytes)
     a_bytes = secrets.token_bytes(32)
     a = int.from_bytes(a_bytes, byteorder="big")
     A = pow(g, a, N)
     A_bytes = pad_to_n(A)
 
-    # 3. Gửi Init Request (o = "init")
-    print("[*] [1/3] Đang gửi SRP Init handshake lên gsa.apple.com...")
+    # 3. Send Init Request (o = "init")
+    print("[*] [1/3] Sending SRP Init handshake to gsa.apple.com...")
     init_params = {
         "A2k": A_bytes,
         "ps": ["s2k", "s2k_fo"],
@@ -541,7 +541,7 @@ def perform_srp_login(username: str, password: str, profile: dict, depth: int = 
     ec = status.get("ec", 0)
     if ec != 0:
         em = status.get("em", "Unknown error")
-        raise RuntimeError(f"GSA Init thất bại (ec={ec}): {em}")
+        raise RuntimeError(f"GSA Init failed (ec={ec}): {em}")
 
     protocol = init_resp.get("sp", "s2k")
     salt = extract_bytes(init_resp.get("s"))
@@ -550,12 +550,12 @@ def perform_srp_login(username: str, password: str, profile: dict, depth: int = 
     iterations = int(init_resp.get("i", 20000))
 
     if not salt or not b_pub_bytes or not c_challenge:
-        raise RuntimeError(f"Init response thiếu dữ liệu cần thiết (s={bool(salt)}, B={bool(b_pub_bytes)}, c={bool(c_challenge)})")
+        raise RuntimeError(f"Init response missing required data (s={bool(salt)}, B={bool(b_pub_bytes)}, c={bool(c_challenge)})")
 
-    print(f"{C_GREEN}[+] SRP Init thành công (protocol={protocol}, iterations={iterations}, salt_len={len(salt)}){C_RESET}")
+    print(f"{C_GREEN}[+] SRP Init successful (protocol={protocol}, iterations={iterations}, salt_len={len(salt)}){C_RESET}")
 
-    # 4. Tính toán SRP Challenge Response
-    print("[*] Đang tính toán PBKDF2 & SRP proof (M1)...")
+    # 4. Calculate SRP Challenge Response
+    print("[*] Calculating PBKDF2 & SRP proof (M1)...")
     B = int.from_bytes(b_pub_bytes, byteorder="big")
 
     # k = SHA256(PAD(N) || PAD(g))
@@ -600,8 +600,8 @@ def perform_srp_login(username: str, password: str, profile: dict, depth: int = 
 
     m1 = hashlib.sha256(h_xor + h_user + salt + a_natural + b_natural + session_key).digest()
 
-    # 5. Gửi Complete Request (o = "complete")
-    print("[*] [2/3] Đang gửi SRP Complete proof lên gsa.apple.com...")
+    # 5. Send Complete Request (o = "complete")
+    print("[*] [2/3] Sending SRP Complete proof to gsa.apple.com...")
     complete_params = {
         "c": c_challenge,
         "M1": m1,
@@ -615,16 +615,16 @@ def perform_srp_login(username: str, password: str, profile: dict, depth: int = 
     comp_ec = comp_status.get("ec", 0)
     auth_type = comp_status.get("au")
 
-    # Kiểm tra M2 proof từ server
+    # Verify M2 proof from server
     if "M2" in complete_resp:
         m2_server = extract_bytes(complete_resp.get("M2"))
         expected_m2 = hashlib.sha256(a_natural + m1 + session_key).digest()
         if m2_server == expected_m2:
-            print(f"{C_GREEN}[+] Server proof M2 xác thực HỢP LỆ!{C_RESET}")
+            print(f"{C_GREEN}[+] Server proof M2 verified successfully!{C_RESET}")
         else:
             print(f"{C_YELLOW}[!] Server proof M2 mismatch.{C_RESET}")
 
-    # Giải mã SPD nếu có
+    # Decrypt SPD payload if present
     spd_dict = {}
     if "spd" in complete_resp:
         spd_raw = extract_bytes(complete_resp.get("spd"))
@@ -633,9 +633,9 @@ def perform_srp_login(username: str, password: str, profile: dict, depth: int = 
                 decrypted_spd = decrypt_cbc(session_key, spd_raw)
                 wrapped_spd = ensure_plist_wrapper(decrypted_spd)
                 spd_dict = plistlib.loads(wrapped_spd)
-                print(f"{C_GREEN}[+] Giải mã SPD payload thành công ({len(spd_dict)} keys).{C_RESET}")
+                print(f"{C_GREEN}[+] Successfully decrypted SPD payload ({len(spd_dict)} keys).{C_RESET}")
             except Exception as e:
-                print(f"{C_YELLOW}[!] Giải mã SPD payload thất bại: {e}{C_RESET}")
+                print(f"{C_YELLOW}[!] SPD payload decryption failed: {e}{C_RESET}")
                 if 'decrypted_spd' in locals():
                     print(f"  [DEBUG-SPD] First 100 bytes: {decrypted_spd[:100]}")
 
@@ -643,7 +643,7 @@ def perform_srp_login(username: str, password: str, profile: dict, depth: int = 
     spd_status = spd_dict.get("status-code")
     spd_authmode = spd_dict.get("authmode")
 
-    # Trích xuất au đa tầng: Status -> Response -> SPD (au) -> SPD (authmode)
+    # Multi-layer extraction of au: Status -> Response -> SPD (au) -> SPD (authmode)
     auth_type = (
         comp_status.get("au")
         or complete_resp.get("au")
@@ -654,14 +654,14 @@ def perform_srp_login(username: str, password: str, profile: dict, depth: int = 
     if not auth_type and (hsc == 409 or spd_status == 409):
         auth_type = spd_authmode or "trustedDeviceSecondaryAuth"
 
-    # Kiểm tra lỗi tài khoản
+    # Check for authentication error
     if comp_ec != 0 and not auth_type:
-        em = comp_status.get("em", "Tài khoản hoặc mật khẩu không chính xác")
-        raise RuntimeError(f"Xác thực thất bại (ec={comp_ec}): {em}")
+        em = comp_status.get("em", "Invalid Apple ID or password")
+        raise RuntimeError(f"Authentication failed (ec={comp_ec}): {em}")
 
-    # 6. Xử lý 2FA nếu có yêu cầu
+    # 6. Handle 2FA verification if required
     if auth_type and any(k in str(auth_type) for k in ("SecondaryAuth", "secondaryAuth", "trustedDeviceSecondaryAuth", "smsSecondaryAuth")):
-        print(f"\n{C_MAGENTA}{C_BOLD}[!] Apple yêu cầu xác minh 2FA: {auth_type}{C_RESET}")
+        print(f"\n{C_MAGENTA}{C_BOLD}[!] Apple requires 2FA verification: {auth_type}{C_RESET}")
         dsid = (
             to_string(spd_dict.get("adsid"))
             or to_string(spd_dict.get("dsid"))
@@ -676,7 +676,7 @@ def perform_srp_login(username: str, password: str, profile: dict, depth: int = 
         )
 
         if not dsid or not idms_token:
-            raise RuntimeError("Thiếu DSID hoặc IDMS-Token để thực hiện bước 2FA!")
+            raise RuntimeError("Missing DSID or IDMS-Token for 2FA verification!")
 
         already_sent = (hsc == 409 or spd_status == 409)
         if not already_sent:
@@ -684,16 +684,16 @@ def perform_srp_login(username: str, password: str, profile: dict, depth: int = 
 
         twofa_ok = handle_trusted_device_2fa(ani, client_info, dsid, idms_token, already_sent=already_sent)
         if not twofa_ok:
-            raise RuntimeError("Xác thực 2FA không thành công.")
+            raise RuntimeError("2FA verification failed.")
 
         if depth >= 1:
-            print(f"{C_YELLOW}[*] Đã hoàn tất xác thực 2FA.{C_RESET}")
+            print(f"{C_YELLOW}[*] 2FA verification completed.{C_RESET}")
         else:
-            print(f"{C_CYAN}[*] 2FA OK! Tự động đăng nhập lại sau 2s để lấy token phiên...{C_RESET}")
+            print(f"{C_CYAN}[*] 2FA OK! Automatically reconnecting in 2s to retrieve session tokens...{C_RESET}")
             time.sleep(2)
             return perform_srp_login(username, password, profile, depth=depth + 1)
 
-    # 7. Trích xuất thông tin phiên đăng nhập
+    # 7. Extract session tokens
     adsid = (
         to_string(spd_dict.get("adsid"))
         or to_string(spd_dict.get("dsid"))
@@ -715,9 +715,9 @@ def perform_srp_login(username: str, password: str, profile: dict, depth: int = 
         "session_timestamp": time.time()
     }
 
-    # 8. Yêu cầu AppToken (com.apple.gs.xcode.auth)
+    # 8. Request Xcode AppToken (com.apple.gs.xcode.auth)
     if adsid and c_resp and idms_token and sk and HAS_CRYPTOGRAPHY:
-        print("\n[*] [3/3] Đang gửi yêu cầu lấy Xcode AppToken (com.apple.gs.xcode.auth)...")
+        print("\n[*] [3/3] Requesting Xcode AppToken (com.apple.gs.xcode.auth)...")
         time.sleep(2)
         try:
             # Checksum = HMAC-SHA256(sk, "apptokens" || adsid || app)
@@ -737,12 +737,12 @@ def perform_srp_login(username: str, password: str, profile: dict, depth: int = 
             token_resp = gsa_request(app_params, client_info, ani, ua, svct=svct, retries=1)
             token_ec = token_resp.get("Status", {}).get("ec", 0)
 
-            # Nếu Apple yêu cầu 2FA (-22411) ngay tại bước AppToken
+            # If Apple prompts 2FA (-22411) specifically at the AppToken stage
             if token_ec == -22411:
-                print(f"\n{C_MAGENTA}{C_BOLD}[2FA] 📱 Apple đã gửi mã xác minh 2FA (-22411) tới thiết bị Apple của bạn!{C_RESET}")
-                code = input(f"{C_BOLD}{C_YELLOW}[?] Nhập mã 6 số hiển thị trên iPhone/iPad: {C_RESET}").strip()
+                print(f"\n{C_MAGENTA}{C_BOLD}[2FA] 📱 Apple sent a 2FA verification code (-22411) to your Apple device!{C_RESET}")
+                code = input(f"{C_BOLD}{C_YELLOW}[?] Enter 6-digit code shown on iPhone/iPad: {C_RESET}").strip()
                 if code:
-                    print("[2FA] Đang gửi mã xác thực lên Apple...")
+                    print("[2FA] Submitting verification code to Apple...")
                     verify_headers = {
                         "Content-Type": "text/x-xml-plist",
                         "Accept": "text/x-xml-plist",
@@ -762,30 +762,31 @@ def perform_srp_login(username: str, password: str, profile: dict, depth: int = 
                         v_req = urllib.request.Request(GSA_VALIDATE_URL, data=b"", headers=verify_headers)
                         with urllib.request.urlopen(v_req, context=ctx, timeout=15) as v_resp:
                             if v_resp.status in (200, 204):
-                                print(f"{C_GREEN}[+] Xác thực 2FA thành công! Đang lấy AppToken...{C_RESET}")
+                                print(f"{C_GREEN}[+] 2FA verification successful! Fetching AppToken...{C_RESET}")
                                 time.sleep(2)
                                 token_resp = gsa_request(app_params, client_info, ani, ua, svct=svct, retries=1)
                     except Exception as ve:
-                        print(f"{C_RED}[-] Xác thực 2FA thất bại: {ve}{C_RESET}")
+                        print(f"{C_RED}[-] 2FA verification failed: {ve}{C_RESET}")
 
             et = extract_bytes(token_resp.get("et"))
             if et:
                 decrypted_et = decrypt_gcm(sk, et)
-                et_plist = plistlib.loads(decrypted_et)
+                wrapped_et = ensure_plist_wrapper(decrypted_et)
+                et_plist = plistlib.loads(wrapped_et)
                 token_val = et_plist.get("t", {}).get(APP_XCODE_AUTH, {}).get("token")
                 if token_val:
-                    print(f"{C_GREEN}{C_BOLD}[+] Nhận AppToken thành công!{C_RESET}")
+                    print(f"{C_GREEN}{C_BOLD}[+] Received Xcode AppToken successfully!{C_RESET}")
                     auth_result["app_token"] = token_val
                     test_developer_api(adsid, token_val, ani)
         except Exception as e:
-            print(f"{C_YELLOW}[!] Lỗi lấy AppToken: {e}{C_RESET}")
+            print(f"{C_YELLOW}[!] Error requesting AppToken: {e}{C_RESET}")
 
     return auth_result
 
 
 def test_developer_api(adsid: str, app_token: str, ani: dict):
-    """Kiểm tra gọi Apple Developer Services API (listTeams) bằng AppToken vừa nhận"""
-    print(f"\n{C_BOLD}{C_BLUE}[*] Đang kiểm tra quyền Apple Developer API (listTeams)...{C_RESET}")
+    """Test Apple Developer Services API (listTeams) using the retrieved AppToken"""
+    print(f"\n{C_BOLD}{C_BLUE}[*] Verifying Apple Developer API access (listTeams)...{C_RESET}")
     dev_url = "https://developerservices2.apple.com/services/QH65B2/listTeams.action?clientId=XABBG36SBA"
     req_id = str(uuid.uuid4()).upper()
 
@@ -832,8 +833,8 @@ def test_developer_api(adsid: str, app_token: str, ani: dict):
             rc = parsed.get("resultCode", -1)
             teams = parsed.get("teams", [])
             if rc == 0:
-                print(f"{C_GREEN}{C_BOLD}[+] Kết nối Apple Developer Services API THÀNH CÔNG!{C_RESET}")
-                print(f"  • Số lượng Team tìm thấy: {len(teams)}")
+                print(f"{C_GREEN}{C_BOLD}[+] Apple Developer Services API connection SUCCESSFUL!{C_RESET}")
+                print(f"  • Teams found: {len(teams)}")
                 for t in teams:
                     t_name = t.get("name", "N/A")
                     t_id = t.get("teamId", "N/A")
@@ -842,9 +843,9 @@ def test_developer_api(adsid: str, app_token: str, ani: dict):
                 return teams
             else:
                 user_str = parsed.get("userString") or parsed.get("resultString", f"resultCode: {rc}")
-                print(f"{C_YELLOW}[!] Apple Developer API phản hồi (rc={rc}): {user_str}{C_RESET}")
+                print(f"{C_YELLOW}[!] Apple Developer API response (rc={rc}): {user_str}{C_RESET}")
     except Exception as e:
-        print(f"{C_RED}[-] Lỗi gọi Apple Developer API: {e}{C_RESET}")
+        print(f"{C_RED}[-] Apple Developer API error: {e}{C_RESET}")
     return None
 
 
@@ -853,20 +854,20 @@ def test_developer_api(adsid: str, app_token: str, ani: dict):
 # =============================================================================
 
 def run_probe():
-    """Chạy quét tự động tất cả các mẫu Client-Info và Services"""
+    """Run automated probe for all Client-Info and Services candidate pairs"""
     print("=" * 80)
     print(f"{C_BOLD}{C_GREEN}  🍎 APPLE GRANDSLAM GSA - CLIENT-INFO & SERVICES PROBER{C_RESET}")
     print("=" * 80)
-    print("[*] Đang kết nối lấy Anisette headers...")
+    print("[*] Connecting to fetch Anisette headers...")
     try:
         ani, server = fetch_anisette()
-        print(f"{C_GREEN}[*] Kết nối thành công tới server: {server}{C_RESET}")
+        print(f"{C_GREEN}[*] Successfully connected to server: {server}{C_RESET}")
     except Exception as e:
-        print(f"{C_RED}[-] Lỗi Anisette: {e}{C_RESET}")
+        print(f"{C_RED}[-] Anisette error: {e}{C_RESET}")
         return
 
     print(f"[*] Anisette Device-ID: {ani.get('X-Mme-Device-Id', '')[:18]}...")
-    print(f"[*] Tổng số mẫu kiểm tra: {len(PROBE_CANDIDATES)}")
+    print(f"[*] Total candidates to test: {len(PROBE_CANDIDATES)}")
     print("-" * 80)
 
     results = []
@@ -875,7 +876,6 @@ def run_probe():
         sys.stdout.flush()
 
         user_id = str(uuid.uuid4()).upper()
-        device_id = ani.get("X-Mme-Device-Id", str(uuid.uuid4()).upper())
         a = random.getrandbits(256)
         A_bytes = pad_to_n(pow(g, a, N))
 
@@ -894,7 +894,7 @@ def run_probe():
             em = status.get("em", "")
 
             if ec == -80045:
-                print(f"{C_RED}❌ CHẶN (ec=-80045){C_RESET}")
+                print(f"{C_RED}❌ BLOCKED (ec=-80045){C_RESET}")
                 results.append((name, ci, ua, svct, False, -80045, em))
             elif ec == -20101:
                 print(f"{C_GREEN}✅ OK (ec=-20101){C_RESET}")
@@ -903,10 +903,10 @@ def run_probe():
                 print(f"{C_YELLOW}⚠️  EC={ec}{C_RESET}")
                 results.append((name, ci, ua, svct, False, ec, em))
         except urllib.error.HTTPError as e:
-            print(f"{C_RED}❌ CHẶN (ec={e.code}){C_RESET}")
+            print(f"{C_RED}❌ BLOCKED (ec={e.code}){C_RESET}")
             results.append((name, ci, ua, svct, False, e.code, str(e)))
         except Exception as e:
-            print(f"{C_RED}❌ LỖI ({e}){C_RESET}")
+            print(f"{C_RED}❌ ERROR ({e}){C_RESET}")
             results.append((name, ci, ua, svct, False, -1, str(e)))
 
         time.sleep(0.3)
@@ -914,7 +914,7 @@ def run_probe():
     print("=" * 80)
     passed = [r for r in results if r[4]]
     failed = [r for r in results if not r[4]]
-    print(f"{C_BOLD}  KẾT QUẢ: {C_GREEN}{len(passed)} HỢP LỆ (MỞ CỬA){C_RESET} | {C_RED}{len(failed)} BỊ CHẶN{C_RESET}")
+    print(f"{C_BOLD}  RESULTS: {C_GREEN}{len(passed)} ACCEPTED{C_RESET} | {C_RED}{len(failed)} BLOCKED{C_RESET}")
     print("=" * 80)
 
 
@@ -924,16 +924,16 @@ def run_probe():
 
 def main():
     parser = argparse.ArgumentParser(description="Apple GSA Client-Info Prober & GrandSlam SRP Login Tool")
-    parser.add_argument("--probe", action="store_true", help="Chạy quét kiểm tra tương thích Client-Info")
-    parser.add_argument("--login", action="store_true", help="Bắt đầu đăng nhập tài khoản Apple ID")
+    parser.add_argument("--probe", action="store_true", help="Run Client-Info compatibility probe")
+    parser.add_argument("--login", action="store_true", help="Authenticate Apple ID account")
     parser.add_argument("-u", "--username", help="Apple ID (Email)")
-    parser.add_argument("-p", "--password", help="Mật khẩu Apple ID")
-    parser.add_argument("-c", "--client", default="pixel7_akd", help="Profile Client-Info (pixel7_akd, iphone16_akd, pixel8, iphone16_dev)")
-    parser.add_argument("-o", "--output", help="Lưu thông tin phiên đăng nhập ra file JSON")
+    parser.add_argument("-p", "--password", help="Apple ID Password")
+    parser.add_argument("-c", "--client", default="pixel7_akd", help="Client-Info profile (pixel7_akd, iphone16_akd, pixel8, iphone16_dev)")
+    parser.add_argument("-o", "--output", help="Save authenticated session to JSON file")
 
     args = parser.parse_args()
 
-    # Chọn profile client
+    # Select client profile
     selected_profile = next((p for p in CLIENT_PROFILES if p["id"] == args.client), CLIENT_PROFILES[0])
 
     if args.probe:
@@ -941,15 +941,15 @@ def main():
         return
 
     if args.login:
-        username = args.username or input(f"{C_BOLD}[?] Nhập Apple ID (Email): {C_RESET}").strip()
-        password = args.password or getpass.getpass(f"{C_BOLD}[?] Nhập Mật khẩu Apple ID: {C_RESET}")
+        username = args.username or input(f"{C_BOLD}[?] Enter Apple ID (Email): {C_RESET}").strip()
+        password = args.password or getpass.getpass(f"{C_BOLD}[?] Enter Apple ID Password: {C_RESET}")
         if not username or not password:
-            print(f"{C_RED}[-] Apple ID và Mật khẩu không được để trống!{C_RESET}")
+            print(f"{C_RED}[-] Apple ID and Password cannot be empty!{C_RESET}")
             return
         try:
             res = perform_srp_login(username, password, selected_profile)
             print("\n" + "=" * 80)
-            print(f"{C_GREEN}{C_BOLD}🎉 ĐĂNG NHẬP THÀNH CÔNG! THÔNG TIN PHIÊN XÁC THỰC:{C_RESET}")
+            print(f"{C_GREEN}{C_BOLD}🎉 LOGIN SUCCESSFUL! AUTHENTICATED SESSION:{C_RESET}")
             print("=" * 80)
             print(f"  • Apple ID:    {C_CYAN}{res['username']}{C_RESET}")
             print(f"  • DSID:        {C_CYAN}{res['dsid']}{C_RESET}")
@@ -961,28 +961,28 @@ def main():
             out_file = args.output or "apple_session.json"
             with open(out_file, "w") as f:
                 json.dump(res, f, indent=2)
-            print(f"{C_GREEN}[+] Đã lưu thông tin phiên vào: {out_file}{C_RESET}")
+            print(f"{C_GREEN}[+] Session saved to: {out_file}{C_RESET}")
         except Exception as e:
-            print(f"\n{C_RED}{C_BOLD}❌ ĐĂNG NHẬP THẤT BẠI: {e}{C_RESET}")
+            print(f"\n{C_RED}{C_BOLD}❌ LOGIN FAILED: {e}{C_RESET}")
         return
 
-    # Menu tương tác nếu chạy python3 probe_services.py không tham số
+    # Interactive menu if run without arguments
     print("=" * 80)
     print(f"{C_BOLD}{C_GREEN}  🍎 FORTIVA - APPLE GRANDSLAM GSA TOOLKIT{C_RESET}")
     print("=" * 80)
-    print("  [1] Quét tương thích Client-Info & Services (Probe Mode - Không cần password)")
-    print("  [2] Đăng nhập Apple ID đầy đủ (GrandSlam SRP + 2FA + Lấy AppToken)")
-    print("  [0] Thoát")
+    print("  [1] Probe Client-Info & Services Compatibility (Probe Mode - No password required)")
+    print("  [2] Full Apple ID Login (GrandSlam SRP + 2FA + AppToken)")
+    print("  [0] Exit")
     print("-" * 80)
 
-    choice = input(f"{C_BOLD}Chọn tính năng [1/2/0]: {C_RESET}").strip()
+    choice = input(f"{C_BOLD}Select option [1/2/0]: {C_RESET}").strip()
     if choice == "1":
         run_probe()
     elif choice == "2":
-        print(f"\n{C_BOLD}Chọn Client-Info profile:{C_RESET}")
+        print(f"\n{C_BOLD}Select Client-Info profile:{C_RESET}")
         for idx, p in enumerate(CLIENT_PROFILES, 1):
             print(f"  [{idx}] {p['name']}")
-        p_choice = input(f"Chọn profile [1-{len(CLIENT_PROFILES)}] (mặc định 1): ").strip()
+        p_choice = input(f"Select profile [1-{len(CLIENT_PROFILES)}] (default 1): ").strip()
         try:
             p_idx = int(p_choice) - 1
             if 0 <= p_idx < len(CLIENT_PROFILES):
@@ -990,15 +990,15 @@ def main():
         except Exception:
             selected_profile = CLIENT_PROFILES[0]
 
-        username = input(f"\n{C_BOLD}[?] Nhập Apple ID (Email): {C_RESET}").strip()
-        password = getpass.getpass(f"{C_BOLD}[?] Nhập Mật khẩu Apple ID: {C_RESET}")
+        username = input(f"\n{C_BOLD}[?] Enter Apple ID (Email): {C_RESET}").strip()
+        password = getpass.getpass(f"{C_BOLD}[?] Enter Apple ID Password: {C_RESET}")
         if not username or not password:
-            print(f"{C_RED}[-] Apple ID và Mật khẩu không được để trống!{C_RESET}")
+            print(f"{C_RED}[-] Apple ID and Password cannot be empty!{C_RESET}")
             return
         try:
             res = perform_srp_login(username, password, selected_profile)
             print("\n" + "=" * 80)
-            print(f"{C_GREEN}{C_BOLD}🎉 ĐĂNG NHẬP THÀNH CÔNG! THÔNG TIN PHIÊN XÁC THỰC:{C_RESET}")
+            print(f"{C_GREEN}{C_BOLD}🎉 LOGIN SUCCESSFUL! AUTHENTICATED SESSION:{C_RESET}")
             print("=" * 80)
             print(f"  • Apple ID:    {C_CYAN}{res['username']}{C_RESET}")
             print(f"  • DSID:        {C_CYAN}{res['dsid']}{C_RESET}")
@@ -1010,11 +1010,11 @@ def main():
             out_file = "apple_session.json"
             with open(out_file, "w") as f:
                 json.dump(res, f, indent=2)
-            print(f"{C_GREEN}[+] Đã lưu thông tin phiên vào: {out_file}{C_RESET}")
+            print(f"{C_GREEN}[+] Session saved to: {out_file}{C_RESET}")
         except Exception as e:
-            print(f"\n{C_RED}{C_BOLD}❌ ĐĂNG NHẬP THẤT BẠI: {e}{C_RESET}")
+            print(f"\n{C_RED}{C_BOLD}❌ LOGIN FAILED: {e}{C_RESET}")
     else:
-        print("Tạm biệt!")
+        print("Goodbye!")
 
 if __name__ == "__main__":
     main()
