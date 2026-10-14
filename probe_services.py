@@ -741,10 +741,76 @@ def perform_srp_login(username: str, password: str, profile: dict, depth: int = 
                 if token_val:
                     print(f"{C_GREEN}{C_BOLD}[+] Nhận AppToken thành công!{C_RESET}")
                     auth_result["app_token"] = token_val
+                    test_developer_api(adsid, token_val, ani)
         except Exception as e:
             print(f"{C_YELLOW}[!] Lỗi lấy AppToken: {e}{C_RESET}")
 
     return auth_result
+
+
+def test_developer_api(adsid: str, app_token: str, ani: dict):
+    """Kiểm tra gọi Apple Developer Services API (listTeams) bằng AppToken vừa nhận"""
+    print(f"\n{C_BOLD}{C_BLUE}[*] Đang kiểm tra quyền Apple Developer API (listTeams)...{C_RESET}")
+    dev_url = "https://developerservices2.apple.com/services/QH65B2/listTeams.action?clientId=XABBG36SBA"
+    req_id = str(uuid.uuid4()).upper()
+
+    dev_body = {
+        "clientId": "XABBG36SBA",
+        "protocolVersion": "QH65B2",
+        "requestId": req_id,
+        "userLocale": ["en_US"]
+    }
+    xml_data = plistlib.dumps(dev_body)
+
+    device_id = ani.get("X-Mme-Device-Id", str(uuid.uuid4()).upper())
+    dev_ci = "<iPhone16,1> <iOS;17.6.1;21G93> <com.apple.Developer/10.4 (10.4.0)>"
+    dev_ua = "Developer/10.4 (com.apple.Developer; build:10.4.0; iOS 17.6.1) Alamofire/5.4.0"
+
+    dev_headers = {
+        "Content-Type": "text/x-xml-plist",
+        "Accept": "text/x-xml-plist",
+        "User-Agent": dev_ua,
+        "X-Mme-Client-Info": dev_ci,
+        "X-MMe-Client-Info": dev_ci,
+        "X-Apple-GS-Token": app_token,
+        "X-Apple-I-Identity-Id": str(adsid),
+        "X-Xcode-Version": "14.2 (14C18)",
+        "X-Apple-I-MD": ani.get("X-Apple-I-MD", ""),
+        "X-Apple-I-MD-M": ani.get("X-Apple-I-MD-M", ""),
+        "X-Apple-I-MD-LU": base64.b64encode(str(adsid).encode()).decode(),
+        "X-Apple-I-MD-RINFO": "17106176",
+        "X-Mme-Device-Id": device_id,
+        "X-Apple-I-Client-Time": ani.get("X-Apple-I-Client-Time", ""),
+        "X-Apple-I-TimeZone": "UTC",
+        "Connection": "close"
+    }
+
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+
+    try:
+        req = urllib.request.Request(dev_url, data=xml_data, headers=dev_headers)
+        with urllib.request.urlopen(req, context=ctx, timeout=15) as resp:
+            resp_body = resp.read()
+            parsed = plistlib.loads(ensure_plist_wrapper(resp_body))
+            rc = parsed.get("resultCode", -1)
+            teams = parsed.get("teams", [])
+            if rc == 0:
+                print(f"{C_GREEN}{C_BOLD}[+] Kết nối Apple Developer Services API THÀNH CÔNG!{C_RESET}")
+                print(f"  • Số lượng Team tìm thấy: {len(teams)}")
+                for t in teams:
+                    t_name = t.get("name", "N/A")
+                    t_id = t.get("teamId", "N/A")
+                    t_type = t.get("type", "Individual")
+                    print(f"    - [{t_id}] {t_name} ({t_type})")
+                return teams
+            else:
+                user_str = parsed.get("userString") or parsed.get("resultString", f"resultCode: {rc}")
+                print(f"{C_YELLOW}[!] Apple Developer API phản hồi (rc={rc}): {user_str}{C_RESET}")
+    except Exception as e:
+        print(f"{C_RED}[-] Lỗi gọi Apple Developer API: {e}{C_RESET}")
+    return None
 
 
 # =============================================================================
@@ -827,7 +893,7 @@ def main():
     parser.add_argument("--login", action="store_true", help="Bắt đầu đăng nhập tài khoản Apple ID")
     parser.add_argument("-u", "--username", help="Apple ID (Email)")
     parser.add_argument("-p", "--password", help="Mật khẩu Apple ID")
-    parser.add_argument("-c", "--client", default="pixel8", help="Profile Client-Info (pixel8, iphone16_dev, ipad_dev, iphone15_akd)")
+    parser.add_argument("-c", "--client", default="pixel7_akd", help="Profile Client-Info (pixel7_akd, iphone16_akd, pixel8, iphone16_dev)")
     parser.add_argument("-o", "--output", help="Lưu thông tin phiên đăng nhập ra file JSON")
 
     args = parser.parse_args()
