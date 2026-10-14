@@ -8,12 +8,13 @@ use std::time::{Duration, Instant};
 
 use crate::auth::error::{SessionExpiredError, is_session_expired_response};
 use crate::auth::anisette::AnisetteClient;
+use crate::constants::{DEVELOPER_CLIENT_INFO, DEVELOPER_USER_AGENT};
 
 pub const BASE_URL_QH65B2: &str = "https://developerservices2.apple.com/services/QH65B2";
 pub const BASE_URL_V1: &str = "https://developerservices2.apple.com/services/v1";
 pub const CLIENT_ID: &str = "XABBG36SBA";
 pub const PROTOCOL_VERSION: &str = "QH65B2";
-pub const XCODE_VERSION: &str = "11.2 (11B41)";
+pub const XCODE_VERSION: &str = "14.2 (14C18)";
 
 #[derive(Debug, Clone)]
 pub struct DevError {
@@ -107,15 +108,23 @@ impl DeveloperClient {
 
         headers.insert(CONTENT_TYPE, HeaderValue::from_str(content_type)?);
         headers.insert(ACCEPT, HeaderValue::from_str(accept)?);
-        headers.insert(USER_AGENT, HeaderValue::from_static("Xcode"));
+        headers.insert(USER_AGENT, HeaderValue::from_static(DEVELOPER_USER_AGENT));
         headers.insert("Accept-Language", HeaderValue::from_static("en-us"));
         headers.insert("X-Apple-App-Info", HeaderValue::from_static("com.apple.gs.xcode.auth"));
         headers.insert("X-Xcode-Version", HeaderValue::from_static(XCODE_VERSION));
         headers.insert("X-Apple-I-Identity-Id", HeaderValue::from_str(&self.dsid)?);
         headers.insert("X-Apple-GS-Token", HeaderValue::from_str(&self.session_token)?);
+        headers.insert(
+            reqwest::header::CONNECTION,
+            HeaderValue::from_static("close"),
+        );
 
         let anisette = self.anisette_cache.get(auth, force_anisette)?;
         for (k, v) in anisette {
+            // Không để Anisette server ghi đè Client-Info cũ hoặc rác
+            if k.eq_ignore_ascii_case("x-mme-client-info") {
+                continue;
+            }
             if let (Ok(name), Ok(value)) = (
                 reqwest::header::HeaderName::from_bytes(k.as_bytes()),
                 HeaderValue::from_str(&v),
@@ -123,6 +132,10 @@ impl DeveloperClient {
                 headers.insert(name, value);
             }
         }
+
+        // Luôn sử dụng định danh chính thức của Apple Developer App trên iOS 17.6
+        headers.insert("X-Mme-Client-Info", HeaderValue::from_static(DEVELOPER_CLIENT_INFO));
+        headers.insert("X-MMe-Client-Info", HeaderValue::from_static(DEVELOPER_CLIENT_INFO));
 
         Ok(headers)
     }
