@@ -229,13 +229,11 @@ fn cmd_login_apple_id() -> Result<()> {
             if result.authenticated {
                 let token_opt = result.session_token.as_ref().filter(|t| !t.is_empty());
                 if token_opt.is_none() {
-                    theme::error_box(
-                        "ĐĂNG NHẬP CHƯA HOÀN TẤT",
-                        &[
-                            "Xác thực SRP hoàn tất nhưng chưa lấy được Xcode AppToken.",
-                            "Vui lòng kiểm tra và nhập chính xác mã 2FA gửi về iPhone/iPad!",
-                        ],
-                    );
+                    let err_lines = vec![
+                        "Xác thực SRP hoàn tất nhưng chưa lấy được Xcode AppToken.".to_string(),
+                        "Vui lòng kiểm tra và nhập chính xác mã 2FA gửi về iPhone/iPad!".to_string(),
+                    ];
+                    theme::error_box("ĐĂNG NHẬP CHƯA HOÀN TẤT", &err_lines);
                     return Err(anyhow!("Chưa nhận được AppToken"));
                 }
                 let token = token_opt.unwrap().clone();
