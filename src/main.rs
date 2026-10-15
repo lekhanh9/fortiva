@@ -57,7 +57,7 @@ fn shellexpand(s: &str) -> String {
 
 fn prompt_choice() -> String {
     menu::print_menu();
-    print!("  {} Chọn (1-8 hoặc 0): ", theme::bold_primary("?"));
+    print!("  {} Chọn (1-9 hoặc 0): ", theme::bold_primary("?"));
     io::stdout().flush().ok();
     let mut buf = Vec::new();
     io::stdin().lock().read_until(b'\n', &mut buf).ok();
@@ -164,12 +164,12 @@ where
     }
 }
 
-/// Account status cho UI.
+/// Account status for UI.
 fn get_account_status() -> String {
     match Session::load() {
         Ok(Some(s)) => {
             if s.is_expired() {
-                theme::warning(&format!("Account: {} (hết hạn)", s.apple_id))
+                theme::warning(&format!("Account: {} (expired)", s.apple_id))
             } else {
                 let team_info = s.team_name.as_deref().unwrap_or(s.team_id.as_deref().unwrap_or(""));
                 if !team_info.is_empty() {
@@ -179,13 +179,49 @@ fn get_account_status() -> String {
                 }
             }
         }
-        _ => theme::muted("Account: Chưa đăng nhập"),
+        _ => theme::muted("Account: Not logged in"),
     }
 }
 
 fn cmd_login_apple_id() -> Result<()> {
     theme::clear_screen();
     log::header("LOGIN APPLE ID");
+
+    println!("  {} Select Apple ID authentication method:", theme::bold_primary("ℹ"));
+    println!("  {} [1] 🐍 Python Bridge (SideDroid Engine — Standard Xcode AppToken)", theme::primary("»"));
+    println!("  {} [2] 🦀 Native Rust SRP Flow", theme::muted("»"));
+    println!();
+    let method = prompt_text("Select (1 or 2, Enter for default 1):");
+
+    if method != "2" {
+        println!();
+        log::info("Starting Python Bridge...");
+        match fortiva::auth::run_python_login(None, None) {
+            Ok(session) => {
+                let mut lines = vec![
+                    format!("Apple ID:  {}", theme::muted(&session.apple_id)),
+                    format!("DSID:      {}", session.dsid),
+                ];
+                if let Some(tname) = &session.team_name {
+                    lines.push(format!("Team:      {} ({})", tname, session.team_id.as_deref().unwrap_or("?")));
+                }
+                let token_display = if session.session_token.len() > 30 {
+                    format!("{}...", &session.session_token[..30])
+                } else {
+                    session.session_token.clone()
+                };
+                lines.push(format!("Token:     {}", token_display));
+                theme::success_box("LOGIN SUCCESSFUL (PYTHON BRIDGE)", &lines);
+                return Ok(());
+            }
+            Err(e) => {
+                log::error(&format!("Python bridge failed: {}", e));
+                if !prompt_yn("Do you want to retry with Native Rust SRP? (y/n):") {
+                    return Err(e);
+                }
+            }
+        }
+    }
 
     let apple_id = prompt_text("Apple ID:");
     if apple_id.is_empty() {
@@ -231,9 +267,21 @@ fn cmd_login_apple_id() -> Result<()> {
                 if token_opt.is_none() {
                     let err_lines = vec![
                         "Xác thực SRP hoàn tất nhưng chưa lấy được Xcode AppToken.".to_string(),
-                        "Vui lòng kiểm tra và nhập chính xác mã 2FA gửi về iPhone/iPad!".to_string(),
+                        "Apple yêu cầu xác thực qua chuẩn Xcode AppToken.".to_string(),
                     ];
                     theme::error_box("ĐĂNG NHẬP CHƯA HOÀN TẤT", &err_lines);
+                    if prompt_yn("Bạn có muốn tự động chuyển sang Python Bridge để hoàn tất đăng nhập và lấy AppToken không? (y/n):") {
+                        let session = fortiva::auth::run_python_login(Some(&apple_id), Some(&password))?;
+                        let mut lines = vec![
+                            format!("Apple ID:  {}", theme::muted(&session.apple_id)),
+                            format!("DSID:      {}", session.dsid),
+                        ];
+                        if let Some(tname) = &session.team_name {
+                            lines.push(format!("Team:      {} ({})", tname, session.team_id.as_deref().unwrap_or("?")));
+                        }
+                        theme::success_box("ĐĂNG NHẬP THÀNH CÔNG (PYTHON BRIDGE)", &lines);
+                        return Ok(());
+                    }
                     return Err(anyhow!("Chưa nhận được AppToken"));
                 }
                 let token = token_opt.unwrap().clone();
@@ -1020,7 +1068,64 @@ fn cmd_sign_auto() -> Result<()> {
     Ok(())
 }
 
+fn cmd_test_session() -> Result<()> {
+    theme::clear_screen();
+    log::header("KIỂM TRA SESSION & DEVELOPER API");
+
+    match fortiva::auth::run_python_test_session() {
+        Ok(()) => {
+            println!();
+            log::success("Tất cả kiểm tra Developer API hoàn tất!");
+            Ok(())
+        }
+        Err(e) => {
+            println!();
+            log::error(&format!("Kiểm tra session thất bại: {}", e));
+            Err(e)
+        }
+    }
+}
+
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() > 1 {
+        match args[1].as_str() {
+            "login" => {
+                if let Err(e) = cmd_login_apple_id() {
+                    eprintln!("Lỗi đăng nhập: {}", e);
+                    std::process::exit(1);
+                }
+                return;
+            }
+            "test" | "test-session" | "test-auth" => {
+                if let Err(e) = cmd_test_session() {
+                    eprintln!("Lỗi kiểm tra session: {}", e);
+                    std::process::exit(1);
+                }
+                return;
+            }
+            "sign" => {
+                if let Err(e) = cmd_sign_auto() {
+                    eprintln!("Lỗi ký IPA: {}", e);
+                    std::process::exit(1);
+                }
+                return;
+            }
+            "--help" | "-h" => {
+                println!("Fortiva - iOS Sideload Tool");
+                println!("Usage: fortiva [COMMAND]");
+                println!();
+                println!("Commands:");
+                println!("  login         Đăng nhập Apple ID (Python Bridge / Native SRP)");
+                println!("  sign          Ký tự động và cài đặt file IPA");
+                println!("  test          Kiểm tra session với Apple Developer Services");
+                println!("  (không lệnh)  Mở giao diện menu tương tác");
+                return;
+            }
+            _ => {}
+        }
+    }
+
     theme::clear_screen();
 
     menu::print_logo();
@@ -1040,6 +1145,7 @@ fn main() {
             "6" => cmd_revoke_certs(),
             "7" => cmd_device_info(),
             "8" | "logout" => cmd_logout(),
+            "9" | "test" => cmd_test_session(),
             "0" | "" => {
                 theme::clear_screen();
                 println!();

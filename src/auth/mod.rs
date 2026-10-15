@@ -5,6 +5,7 @@ pub mod crypto;
 pub mod gsa;
 pub mod srp;
 pub mod twofa;
+pub mod bridge;
 
 use anyhow::Result;
 use std::collections::HashMap;
@@ -13,6 +14,7 @@ pub use anisette::AnisetteClient;
 pub use gsa::GsaClient;
 pub use srp::SrpFlow;
 pub use twofa::TwoFAHandler;
+pub use bridge::{run_python_login, run_python_test_session, is_python_available};
 
 pub struct Fortiva {
     pub gsa: GsaClient,

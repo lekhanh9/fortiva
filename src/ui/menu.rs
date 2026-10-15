@@ -36,15 +36,17 @@ pub fn print_menu() {
         MUTED, RESET, PRIMARY, RESET, MUTED, RESET);
     println!("{}│{}  [{}4{}]  🔗  Setup SideStore pairing           {}│{}",
         MUTED, RESET, PRIMARY, RESET, MUTED, RESET);
-    println!("{}│{}  [{}5{}]  📱  Quản lý thiết bị                    {}│{}",
+    println!("{}│{}  [{}5{}]  📱  Manage Devices                     {}│{}",
         MUTED, RESET, PRIMARY, RESET, MUTED, RESET);
-    println!("{}│{}  [{}6{}]  🔑  Thu hồi certificate                {}│{}",
+    println!("{}│{}  [{}6{}]  🔑  Revoke Certificate                 {}│{}",
         MUTED, RESET, PRIMARY, RESET, MUTED, RESET);
-    println!("{}│{}  [{}7{}]  📲  Device info                         {}│{}",
+    println!("{}│{}  [{}7{}]  📲  Device Info                        {}│{}",
         MUTED, RESET, PRIMARY, RESET, MUTED, RESET);
-    println!("{}│{}  [{}8{}]  🚪  Logout                            {}│{}",
+    println!("{}│{}  [{}8{}]  🚪  Logout                             {}│{}",
         MUTED, RESET, PRIMARY, RESET, MUTED, RESET);
-    println!("{}│{}  [{}0{}]  ❌  Thoát                              {}│{}",
+    println!("{}│{}  [{}9{}]  🧪  Test Session / Developer API       {}│{}",
+        MUTED, RESET, PRIMARY, RESET, MUTED, RESET);
+    println!("{}│{}  [{}0{}]  ❌  Exit                               {}│{}",
         MUTED, RESET, PRIMARY, RESET, MUTED, RESET);
     println!("{}└─────────────────────────────────────────────┘{}", MUTED, RESET);
     println!();
