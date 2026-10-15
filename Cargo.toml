@@ -42,7 +42,7 @@ cbc = { version = "0.1", features = ["alloc"] }
 openssl = { version = "0.10", features = ["vendored"] }
 
 # Codesign
-apple-codesign = { git = "https://github.com/khanh8249/apple-platform-rs", branch = "main" }
+apple-codesign = { git = "https://github.com/lekhanh9/apple-platform-rs", branch = "main" }
 p12-keystore = "0.3"
 
 # Archive
@@ -67,7 +67,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [patch.crates-io]
-idevice = { git = "https://github.com/khanh8249/idevice", branch = "master", package = "idevice" }
+idevice = { git = "https://github.com/lekhanh9/idevice", branch = "master", package = "idevice" }
 
 [profile.release]
 opt-level = 3

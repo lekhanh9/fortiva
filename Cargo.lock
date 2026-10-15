@@ -167,7 +167,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 [[package]]
 name = "app-store-connect"
 version = "0.7.0"
-source = "git+https://github.com/khanh8249/apple-platform-rs?branch=main#e0cc81b9e7156d2b58425e47117a052ead1608c2"
+source = "git+https://github.com/lekhanh9/apple-platform-rs?branch=main#e0cc81b9e7156d2b58425e47117a052ead1608c2"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -189,7 +189,7 @@ dependencies = [
 [[package]]
 name = "apple-bundles"
 version = "0.21.0"
-source = "git+https://github.com/khanh8249/apple-platform-rs?branch=main#e0cc81b9e7156d2b58425e47117a052ead1608c2"
+source = "git+https://github.com/lekhanh9/apple-platform-rs?branch=main#e0cc81b9e7156d2b58425e47117a052ead1608c2"
 dependencies = [
  "anyhow",
  "plist",
@@ -200,7 +200,7 @@ dependencies = [
 [[package]]
 name = "apple-codesign"
 version = "0.29.0"
-source = "git+https://github.com/khanh8249/apple-platform-rs?branch=main#e0cc81b9e7156d2b58425e47117a052ead1608c2"
+source = "git+https://github.com/lekhanh9/apple-platform-rs?branch=main#e0cc81b9e7156d2b58425e47117a052ead1608c2"
 dependencies = [
  "anyhow",
  "app-store-connect",
@@ -283,7 +283,7 @@ dependencies = [
 [[package]]
 name = "apple-flat-package"
 version = "0.20.0"
-source = "git+https://github.com/khanh8249/apple-platform-rs?branch=main#e0cc81b9e7156d2b58425e47117a052ead1608c2"
+source = "git+https://github.com/lekhanh9/apple-platform-rs?branch=main#e0cc81b9e7156d2b58425e47117a052ead1608c2"
 dependencies = [
  "apple-xar",
  "cpio-archive",
@@ -297,7 +297,7 @@ dependencies = [
 [[package]]
 name = "apple-xar"
 version = "0.20.0"
-source = "git+https://github.com/khanh8249/apple-platform-rs?branch=main#e0cc81b9e7156d2b58425e47117a052ead1608c2"
+source = "git+https://github.com/lekhanh9/apple-platform-rs?branch=main#e0cc81b9e7156d2b58425e47117a052ead1608c2"
 dependencies = [
  "base64 0.22.1",
  "bcder",
@@ -1485,7 +1485,7 @@ checksum = "7f8f80099a98041a3d1622845c271458a2d73e688351bf3cb999266764b81d48"
 [[package]]
 name = "cpio-archive"
 version = "0.10.0"
-source = "git+https://github.com/khanh8249/apple-platform-rs?branch=main#e0cc81b9e7156d2b58425e47117a052ead1608c2"
+source = "git+https://github.com/lekhanh9/apple-platform-rs?branch=main#e0cc81b9e7156d2b58425e47117a052ead1608c2"
 dependencies = [
  "chrono",
  "is_executable",
@@ -2809,7 +2809,7 @@ dependencies = [
 [[package]]
 name = "idevice"
 version = "0.1.68"
-source = "git+https://github.com/khanh8249/idevice?branch=master#74fc133ab197be2f3c18abc4436d37f271d82e1a"
+source = "git+https://github.com/lekhanh9/idevice?branch=master#74fc133ab197be2f3c18abc4436d37f271d82e1a"
 dependencies = [
  "aes 0.8.4",
  "async-stream",
