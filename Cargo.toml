@@ -39,7 +39,8 @@ aes = "0.8"
 aes-gcm = "0.10"
 cbc = { version = "0.1", features = ["alloc"] }
 # OpenSSL (CSR + P12)
-openssl = { version = "0.10", features = ["vendored"] }
+openssl = { version = "0.10" }
+
 
 # Codesign
 apple-codesign = { git = "https://github.com/lekhanh9/apple-platform-rs", branch = "main" }

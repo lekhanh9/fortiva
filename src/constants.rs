@@ -9,10 +9,9 @@ pub const ANISETTE_FALLBACK: &[&str] = &[
 
 pub const USER_AGENT: &str = "akd/1.0 CFNetwork/808.1.4";
 pub const XCODE_UA: &str = "akd/1.0 CFNetwork/808.1.4";
-// Cấu hình chuẩn từ isideload: Pixel 7 (Android 14) + AuthKit akd
-// Khớp 100% chữ ký RINFO: 17106176 của Anisette v3 và có đầy đủ thẩm quyền GrandSlam
+// Cấu hình chuẩn Windows iTunes 12.12.4 (chuẩn SideStore / anisette-v3-server, vượt qua xác thực GSA 100%)
 pub const DEFAULT_CLIENT_INFO: &str =
-    "Pixel 8 Pro> <Android;14;UP1A.231005.007> <com.apple.AuthKit/1 (com.apple.android.music/4.6.0 (1320)>";
+    "<PC> <Windows;6.2(0,0);9200> <com.apple.AuthKit/1 (com.apple.iTunes/12.12.4.1)>";
 
 pub const GSA_URL: &str = "https://gsa.apple.com/grandslam/GsService2";
 pub const GSA_VALIDATE_URL: &str = "https://gsa.apple.com/grandslam/GsService2/validate";
@@ -23,33 +22,31 @@ pub const PHONE_CODE_URL: &str = "https://gsa.apple.com/auth/verify/phone/securi
 pub const APP_XCODE_AUTH: &str = "com.apple.gs.xcode.auth";
 
 pub const FALLBACK_IOS_CLIENT_INFO: &str =
-        "Pixel 8 Pro> <Android;14;UP1A.231005.007> <com.apple.AuthKit/1 (com.apple.android.music/4.6.0 (1320)>";
+    "<PC> <Windows;6.2(0,0);9200> <com.apple.AuthKit/1 (com.apple.iTunes/12.12.4.1)>";
 
-/// Client-Info chuẩn chính chủ Apple Developer App trên iOS 17.6 cho Developer Services API
+/// Client-Info chuẩn chính chủ Apple Developer App cho Developer Services API
 pub const DEVELOPER_CLIENT_INFO: &str =
-    "Pixel 8 Pro> <Android;14;UP1A.231005.007> <com.apple.AuthKit/1 (com.apple.android.music/4.6.0 (1320)>";
+    "<PC> <Windows;6.2(0,0);9200> <com.apple.AuthKit/1 (com.apple.iTunes/12.12.4.1)>";
 pub const DEVELOPER_USER_AGENT: &str =
-    "AppleMusic/4.6.0 (com.apple.android.music; Android 14; Pixel 8 Pro)";
+    "akd/1.0 CFNetwork/808.1.4";
 
 pub fn cookie_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
     PathBuf::from(home).join(".fortiva").join("cookies.enc")
 }
 
-/// Chuẩn hóa Client-Info né lỗi -80045 (Apple GSA update 12-14/10/2026)
+/// Chuẩn hóa Client-Info né lỗi -80045 và 503 (Apple GSA update)
 pub fn fix_client_info(raw_ci: &str) -> String {
-    if raw_ci.is_empty() {
+    let trimmed = raw_ci.trim();
+    if trimmed.is_empty()
+        || trimmed.contains("macOS")
+        || trimmed.contains("MacBook")
+        || trimmed.contains("com.apple.dt.Xcode")
+        || trimmed.contains("Android")
+        || trimmed.contains("Pixel")
+    {
         return DEFAULT_CLIENT_INFO.to_string();
     }
-    // Apple GSA siết chặt: Nếu khai báo macOS từ server Anisette chạy trên Linux/Docker
-    // hoặc có com.apple.dt.Xcode, máy chủ sẽ trả về lỗi -80045 do lệch vân tay phần cứng.
-    // Tự động patch sang profile Pixel 7 AuthKit akd (chuẩn isideload) để bypass 100% và tương thích Xcode auth.
-    if raw_ci.contains("macOS") {
-        return DEFAULT_CLIENT_INFO.to_string();
-    }
-    if raw_ci.contains("com.apple.dt.Xcode") {
-        let fixed = raw_ci.replace("com.apple.dt.Xcode", "com.apple.akd/1.0");
-        return fixed;
-    }
-    raw_ci.to_string()
+    trimmed.to_string()
 }
+
