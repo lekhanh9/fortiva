@@ -14,7 +14,7 @@ pub use anisette::AnisetteClient;
 pub use gsa::GsaClient;
 pub use srp::SrpFlow;
 pub use twofa::TwoFAHandler;
-pub use bridge::{run_python_login, run_python_test_session, is_python_available};
+pub use bridge::{run_python_login, run_python_login_with_options, run_python_test_session, is_python_available};
 
 pub struct Fortiva {
     pub gsa: GsaClient,
@@ -32,6 +32,7 @@ impl Fortiva {
 
         let anisette = AnisetteClient::new(anisette_url);
         let gsa = GsaClient::new(anisette, user_id.clone(), device_id.clone());
+        let client_info = crate::config::Config::client_info();
 
         Ok(Self {
             gsa,
@@ -39,8 +40,14 @@ impl Fortiva {
             twofa: TwoFAHandler::new(),
             user_id,
             device_id,
-            client_info: crate::constants::DEFAULT_CLIENT_INFO.to_string(),
+            client_info,
         })
+    }
+
+    pub fn set_client_info(&mut self, ci: &str, ua: Option<&str>) {
+        self.client_info = ci.to_string();
+        self.gsa.set_client_info(ci, ua);
+        self.twofa.set_client_info(ci, ua);
     }
 
     pub fn generate_anisette_headers(&mut self) -> Result<HashMap<String, String>> {

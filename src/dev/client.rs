@@ -29,6 +29,7 @@ pub struct DeveloperClient {
     pub last_error: Option<DevError>,
     pub client: Client,
     pub anisette_cache: AnisetteCache,
+    pub client_info: Option<String>,
 }
 
 pub struct AnisetteCache {
@@ -67,6 +68,8 @@ impl DeveloperClient {
             .timeout(Duration::from_secs(30))
             .build()?;
 
+        let client_info = Some(crate::config::Config::client_info());
+
         Ok(Self {
             dsid,
             session_token,
@@ -74,7 +77,12 @@ impl DeveloperClient {
             last_error: None,
             client,
             anisette_cache: AnisetteCache::new(),
+            client_info,
         })
+    }
+
+    pub fn set_client_info(&mut self, client_info: String) {
+        self.client_info = Some(client_info);
     }
 
     pub fn set_team(&mut self, team_id: String) {
@@ -125,6 +133,11 @@ impl DeveloperClient {
         for (k, v) in anisette {
             if k.eq_ignore_ascii_case("x-mme-client-info") {
                 has_client_info = true;
+                let ci_to_use = self.client_info.as_deref().unwrap_or(&v);
+                if let Ok(value) = HeaderValue::from_str(ci_to_use) {
+                    headers.insert(reqwest::header::HeaderName::from_static("x-mme-client-info"), value);
+                }
+                continue;
             }
             if let (Ok(name), Ok(value)) = (
                 reqwest::header::HeaderName::from_bytes(k.as_bytes()),
@@ -135,7 +148,10 @@ impl DeveloperClient {
         }
 
         if !has_client_info {
-            headers.insert("X-Mme-Client-Info", HeaderValue::from_static(DEFAULT_CLIENT_INFO));
+            let default_ci = self.client_info.as_deref().unwrap_or(DEFAULT_CLIENT_INFO);
+            if let Ok(val) = HeaderValue::from_str(default_ci) {
+                headers.insert("X-Mme-Client-Info", val);
+            }
         }
 
         Ok(headers)

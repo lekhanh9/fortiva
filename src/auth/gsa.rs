@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::auth::anisette::AnisetteClient;
-use crate::constants::{DEFAULT_CLIENT_INFO, GSA_URL, USER_AGENT as UA};
+use crate::constants::GSA_URL;
 
 pub struct GsaClient {
     pub client: Client,
@@ -15,6 +15,7 @@ pub struct GsaClient {
     pub user_id: String,
     pub device_id: String,
     pub client_info: String,
+    pub user_agent: String,
 }
 
 impl GsaClient {
@@ -32,13 +33,24 @@ impl GsaClient {
             .build()
             .expect("Failed to build reqwest client");
 
+        let client_info = crate::config::Config::client_info();
+        let user_agent = crate::config::Config::user_agent();
+
         Self {
             client,
             anisette,
             user_id,
             device_id,
-            client_info: DEFAULT_CLIENT_INFO.to_string(),
+            client_info,
+            user_agent,
         }
+    }
+
+    pub fn set_client_info(&mut self, ci: &str, ua: Option<&str>) {
+        self.client_info = ci.to_string();
+        self.user_agent = ua
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| crate::constants::match_user_agent_for_client_info(ci));
     }
 
     pub fn request(
@@ -206,7 +218,7 @@ impl GsaClient {
 
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("text/x-xml-plist"));
         headers.insert(ACCEPT, HeaderValue::from_static("*/*"));
-        headers.insert(USER_AGENT, HeaderValue::from_static(UA));
+        headers.insert(USER_AGENT, HeaderValue::from_str(&self.user_agent)?);
         headers.insert(
             "X-Mme-Client-Info",
             HeaderValue::from_str(&self.client_info)?,

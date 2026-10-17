@@ -71,6 +71,16 @@ pub fn run_python_login(
     apple_id: Option<&str>,
     password: Option<&str>,
 ) -> Result<Session> {
+    run_python_login_with_options(apple_id, password, None, None, None)
+}
+
+pub fn run_python_login_with_options(
+    apple_id: Option<&str>,
+    password: Option<&str>,
+    profile: Option<&str>,
+    client_info: Option<&str>,
+    user_agent: Option<&str>,
+) -> Result<Session> {
     if !is_python_available() {
         return Err(anyhow!(
             "Python 3 is not installed on this system! Please install python3 (e.g., apt install python3 or pkg install python)."
@@ -91,6 +101,43 @@ pub fn run_python_login(
     if let Some(pwd) = password {
         if !pwd.is_empty() {
             cmd.arg("--password").arg(pwd);
+        }
+    }
+
+    let (p_opt, ci_opt, ua_opt) = {
+        let conf = crate::config::Config::load().ok();
+        let p = profile.map(|s| s.to_string())
+            .or_else(|| conf.as_ref().and_then(|c| c.profile.clone()));
+        let ci = client_info.map(|s| s.to_string())
+            .or_else(|| {
+                if let Ok(ci_env) = std::env::var("FORTIVA_CLIENT_INFO") {
+                    if !ci_env.trim().is_empty() { return Some(ci_env.trim().to_string()); }
+                }
+                conf.as_ref().and_then(|c| c.client_info.clone())
+            });
+        let ua = user_agent.map(|s| s.to_string())
+            .or_else(|| {
+                if let Ok(ua_env) = std::env::var("FORTIVA_USER_AGENT") {
+                    if !ua_env.trim().is_empty() { return Some(ua_env.trim().to_string()); }
+                }
+                conf.as_ref().and_then(|c| c.user_agent.clone())
+            });
+        (p, ci, ua)
+    };
+
+    if let Some(ci) = &ci_opt {
+        if !ci.is_empty() {
+            cmd.arg("--client-info").arg(ci);
+        }
+    }
+    if let Some(ua) = &ua_opt {
+        if !ua.is_empty() {
+            cmd.arg("--user-agent").arg(ua);
+        }
+    }
+    if let Some(p) = &p_opt {
+        if !p.is_empty() {
+            cmd.arg("--profile").arg(p);
         }
     }
 

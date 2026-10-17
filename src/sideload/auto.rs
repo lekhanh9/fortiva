@@ -251,6 +251,8 @@ pub fn sideload_full(
         created_at: crate::session::now(),
         expires_at: crate::session::now() + 7 * 24 * 3600,
         token_issued_at: crate::session::now(),
+        client_info: Some(gsa.client_info.clone()),
+        user_agent: Some(gsa.user_agent.clone()),
     };
     session.save()?;
     println!("Login OK - Team: {}", team_id);

@@ -18,6 +18,10 @@ pub struct Session {
     pub expires_at: u64,
     #[serde(default)]
     pub token_issued_at: u64,       // Thoi diem fetch token
+    #[serde(default)]
+    pub client_info: Option<String>,
+    #[serde(default)]
+    pub user_agent: Option<String>,
 }
 
 impl Session {
@@ -73,6 +77,8 @@ impl Session {
                     if !apple_id.is_empty() && !dsid.is_empty() && !session_token.is_empty() {
                         let team_id = val.get("team_id").and_then(|v| v.as_str()).map(|s| s.to_string());
                         let team_name = val.get("team_name").and_then(|v| v.as_str()).map(|s| s.to_string());
+                        let client_info = val.get("client_info").and_then(|v| v.as_str()).map(|s| s.to_string());
+                        let user_agent = val.get("user_agent").and_then(|v| v.as_str()).map(|s| s.to_string());
                         let now_ts = now();
                         let sess = Session {
                             apple_id,
@@ -85,6 +91,8 @@ impl Session {
                             created_at: now_ts,
                             expires_at: now_ts + 7 * 24 * 3600,
                             token_issued_at: now_ts,
+                            client_info,
+                            user_agent,
                         };
                         let _ = sess.save();
                         return Ok(Some(sess));

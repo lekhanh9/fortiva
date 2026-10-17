@@ -129,8 +129,12 @@ impl AnisetteClient {
         if let Some(did) = anisette.get("X-Mme-Device-Id") {
             *device_id = did.clone();
         }
-        if let Some(ci) = anisette.get("X-MMe-Client-Info") {
-            *client_info = fix_client_info(ci);
+        if client_info.trim().is_empty() {
+            if let Some(ci) = anisette.get("X-MMe-Client-Info") {
+                *client_info = fix_client_info(ci);
+            } else {
+                *client_info = crate::constants::DEFAULT_CLIENT_INFO.to_string();
+            }
         }
 
         let meta = Self::get_meta_headers(user_id, device_id);

@@ -187,11 +187,22 @@ fn cmd_login_apple_id() -> Result<()> {
     theme::clear_screen();
     log::header("LOGIN APPLE ID");
 
+    println!("  {} Device Profile: {}", theme::bold_primary("ℹ"), theme::success(&fortiva::config::Config::active_profile_name()));
+    println!("  {} Client-Info:    {}", theme::muted("•"), theme::muted(&fortiva::config::Config::client_info()));
+    println!("  {} User-Agent:     {}", theme::muted("•"), theme::muted(&fortiva::config::Config::user_agent()));
+    println!();
     println!("  {} Select Apple ID authentication method:", theme::bold_primary("ℹ"));
     println!("  {} [1] 🐍 Python Bridge (SideDroid Engine — Standard Xcode AppToken)", theme::primary("»"));
     println!("  {} [2] 🦀 Native Rust SRP Flow", theme::muted("»"));
+    println!("  {} [3] 🛠️  Thay đổi Device Profile / Client-Info trước khi login", theme::muted("»"));
     println!();
-    let method = prompt_text("Select (1 or 2, Enter for default 1):");
+    let mut method = prompt_text("Select (1, 2, hoặc 3, Enter for default 1):");
+
+    if method == "3" {
+        let _ = prompt_select_device_profile();
+        println!();
+        method = prompt_text("Select (1: Python Bridge, 2: Native Rust SRP, Enter = 1):");
+    }
 
     if method != "2" {
         println!();
@@ -310,6 +321,8 @@ fn cmd_login_apple_id() -> Result<()> {
                         created_at: fortiva::session::now(),
                         expires_at: fortiva::session::now() + 7 * 24 * 3600,
                         token_issued_at: fortiva::session::now(),   // ← MỚI
+                        client_info: Some(gsa.client_info.clone()),
+                        user_agent: Some(gsa.user_agent.clone()),
                     };
 
                     // === FETCH TEAM ID TU APPLE ===
@@ -412,55 +425,163 @@ fn cmd_login_apple_id() -> Result<()> {
 //  FEATURE 2: TEST ANISETTE
 // ============================================================
 
-fn cmd_test_anisette() -> Result<()> {
-    theme::clear_screen();
-    log::header("CẤU HÌNH ANISETTE SERVER");
-
-    println!("  {} Server hiện tại: {}\n", theme::primary("→"), fortiva::config::Config::anisette_url());
-    let url = prompt_text("Nhập Anisette URL mới (Enter = kiểm tra server hiện tại):");
-    let test_url = if url.is_empty() { None } else { Some(url.as_str()) };
-
+fn prompt_select_device_profile() -> Result<bool> {
     println!();
-    let sp = spinner::new("Đang kiểm tra kết nối tới Anisette server...");
-    let mut client = AnisetteClient::new(test_url);
+    println!("  ╭──────────────────────────────────────────────────────────────────────────╮");
+    println!("  │ 🛠️  DANH SÁCH DEVICE PROFILES (CLIENT-INFO & USER-AGENT KHỚP CHÍNH XÁC)   │");
+    println!("  ╰──────────────────────────────────────────────────────────────────────────╯");
+    for (i, p) in fortiva::config::DEVICE_PROFILES.iter().enumerate() {
+        let tag = if i == 0 { " 🔥 [Default]" } else { "" };
+        println!("    [{}] {}{}", i + 1, theme::primary(p.name), theme::success(tag));
+        println!("        {}", theme::muted(p.description));
+    }
+    println!("    [7] ✍️  Nhập Client-Info tùy chỉnh thủ công");
+    println!("    [8] 🔄 Khôi phục mặc định (Windows iTunes 12.12)");
+    println!();
 
-    match client.fetch(true) {
-        Ok(headers) => {
-            sp.finish_and_clear();
-            log::success(&format!("Nhận được {} headers thành công!", headers.len()));
-            println!();
+    let choice = prompt_text("Chọn profile (1-8, Enter = hủy):");
+    if choice.is_empty() {
+        return Ok(false);
+    }
 
-            let important = [
-                "X-Apple-I-MD", "X-Apple-I-MD-M", "X-Apple-I-MD-LU",
-                "X-Apple-I-MD-RINFO", "X-Mme-Device-Id",
-                "X-Apple-I-Client-Time", "X-MMe-Client-Info",
-            ];
-            let mut lines = Vec::new();
-            for key in &important {
-                if let Some(v) = headers.get(*key) {
-                    let display = if v.len() > 40 {
-                        format!("{}...({} chars)", &v[..40], v.len())
-                    } else {
-                        v.clone()
-                    };
-                    lines.push(format!("{:<26} {}", theme::primary(key), display));
+    match choice.as_str() {
+        "1" | "2" | "3" | "4" | "5" | "6" => {
+            if let Ok(idx) = choice.parse::<usize>() {
+                if idx >= 1 && idx <= fortiva::config::DEVICE_PROFILES.len() {
+                    let p = &fortiva::config::DEVICE_PROFILES[idx - 1];
+                    fortiva::config::Config::set_client_info(
+                        Some(p.client_info),
+                        Some(p.user_agent),
+                        Some(p.name),
+                    )?;
+                    println!();
+                    log::success(&format!("✓ Đã áp dụng Profile: {}", p.name));
+                    println!("  • Client-Info: {}", p.client_info);
+                    println!("  • User-Agent:  {}", p.user_agent);
+                    return Ok(true);
                 }
             }
-            theme::box_section("Anisette Headers", &lines);
+        }
+        "7" => {
+            println!();
+            let raw_ci = prompt_text("Nhập chuỗi Client-Info tùy chỉnh:");
+            if raw_ci.is_empty() {
+                log::warn("Bỏ qua thay đổi Client-Info.");
+                return Ok(false);
+            }
+            let ci = fortiva::constants::sanitize_client_info(&raw_ci);
+            let suggested_ua = fortiva::constants::match_user_agent_for_client_info(&ci);
+            println!("  {} Gợi ý User-Agent khớp: {}", theme::bold_primary("ℹ"), theme::primary(&suggested_ua));
+            let raw_ua = prompt_text("Nhập User-Agent (Enter để dùng gợi ý trên):");
+            let ua = if raw_ua.is_empty() { suggested_ua } else { raw_ua };
+            fortiva::config::Config::set_client_info(Some(&ci), Some(&ua), Some("Custom"))?;
+            println!();
+            log::success("✓ Đã lưu Client-Info tùy chỉnh thành công!");
+            return Ok(true);
+        }
+        "8" => {
+            fortiva::config::Config::reset_client_info()?;
+            log::success("✓ Đã khôi phục Client-Info về mặc định (Windows iTunes 12.12)!");
+            return Ok(true);
+        }
+        _ => {
+            log::warn("Lựa chọn không hợp lệ.");
+        }
+    }
+    Ok(false)
+}
 
-            if !url.is_empty() && prompt_yn("Lưu URL này làm server mặc định? (y/n):") {
+fn cmd_config_anisette_and_client_info() -> Result<()> {
+    theme::clear_screen();
+    log::header("CẤU HÌNH ANISETTE & CLIENT-INFO");
+
+    println!("  {} Anisette URL hiện tại:  {}", theme::primary("→"), fortiva::config::Config::anisette_url());
+    println!("  {} Device Profile hiện tại: {}", theme::primary("→"), theme::success(&fortiva::config::Config::active_profile_name()));
+    println!("  {} Client-Info hiện tại:   {}", theme::primary("→"), theme::muted(&fortiva::config::Config::client_info()));
+    println!("  {} User-Agent hiện tại:    {}\n", theme::primary("→"), theme::muted(&fortiva::config::Config::user_agent()));
+
+    println!("  {} Chọn thao tác:", theme::bold_primary("?"));
+    println!("    [1] 🌐 Đổi Anisette Server URL");
+    println!("    [2] 📱 Chọn Device Profile có sẵn");
+    println!("    [3] ✍️  Nhập chuỗi Client-Info tùy chỉnh thủ công");
+    println!("    [4] 🔄 Khôi phục mặc định (Windows iTunes 12.12)");
+    println!("    [5] 🧪 Kiểm tra kết nối Anisette Server");
+    println!("    [0] Quay lại\n");
+
+    let choice = prompt_text("Chọn (1-5 hoặc 0, Enter = kiểm tra Anisette):");
+    match choice.as_str() {
+        "1" => {
+            let url = prompt_text("Nhập Anisette URL mới:");
+            if !url.is_empty() {
                 fortiva::config::Config::set_anisette_url(&url)?;
-                log::success("✓ Đã lưu Anisette URL vào config thành công!");
+                log::success("✓ Đã lưu Anisette URL mới vào config!");
             }
         }
-        Err(e) => {
-            sp.finish_and_clear();
-            log::error(&format!("Thất bại: {}", e));
-            return Err(e);
+        "2" => {
+            let _ = prompt_select_device_profile();
         }
+        "3" => {
+            println!();
+            let raw_ci = prompt_text("Nhập chuỗi Client-Info tùy chỉnh:");
+            if !raw_ci.is_empty() {
+                let ci = fortiva::constants::sanitize_client_info(&raw_ci);
+                let suggested_ua = fortiva::constants::match_user_agent_for_client_info(&ci);
+                println!("  {} Gợi ý User-Agent: {}", theme::bold_primary("ℹ"), theme::primary(&suggested_ua));
+                let raw_ua = prompt_text("Nhập User-Agent (Enter để dùng gợi ý trên):");
+                let ua = if raw_ua.is_empty() { suggested_ua } else { raw_ua };
+                fortiva::config::Config::set_client_info(Some(&ci), Some(&ua), Some("Custom"))?;
+                log::success("✓ Đã lưu Client-Info tùy chỉnh vào config!");
+            }
+        }
+        "4" => {
+            fortiva::config::Config::reset_client_info()?;
+            log::success("✓ Đã khôi phục Client-Info về mặc định (Windows iTunes 12.12)!");
+        }
+        "0" => {
+            return Ok(());
+        }
+        "5" | "" => {
+            println!();
+            let sp = spinner::new("Đang kiểm tra kết nối tới Anisette server...");
+            let mut client = AnisetteClient::new(None);
+            match client.fetch(true) {
+                Ok(headers) => {
+                    sp.finish_and_clear();
+                    log::success(&format!("Nhận được {} headers thành công!", headers.len()));
+                    println!();
+                    let important = [
+                        "X-Apple-I-MD", "X-Apple-I-MD-M", "X-Apple-I-MD-LU",
+                        "X-Apple-I-MD-RINFO", "X-Mme-Device-Id",
+                        "X-Apple-I-Client-Time", "X-MMe-Client-Info",
+                    ];
+                    let mut lines = Vec::new();
+                    for key in &important {
+                        if let Some(v) = headers.get(*key) {
+                            let display = if v.len() > 40 {
+                                format!("{}...({} chars)", &v[..40], v.len())
+                            } else {
+                                v.clone()
+                            };
+                            lines.push(format!("{:<26} {}", theme::primary(key), display));
+                        }
+                    }
+                    theme::box_section("Anisette Headers", &lines);
+                }
+                Err(e) => {
+                    sp.finish_and_clear();
+                    log::error(&format!("Thất bại: {}", e));
+                    return Err(e);
+                }
+            }
+        }
+        _ => {}
     }
 
     Ok(())
+}
+
+fn cmd_test_anisette() -> Result<()> {
+    cmd_config_anisette_and_client_info()
 }
 
 // ============================================================
@@ -1086,15 +1207,160 @@ fn cmd_test_session() -> Result<()> {
     }
 }
 
+fn print_help() {
+    println!("Fortiva - iOS Sideload Tool");
+    println!("Usage: fortiva [COMMAND] [OPTIONS]");
+    println!();
+    println!("Commands:");
+    println!("  login         Đăng nhập Apple ID (Python Bridge / Native SRP)");
+    println!("  sign          Ký tự động và cài đặt file IPA");
+    println!("  test          Kiểm tra session với Apple Developer Services");
+    println!("  config        Xem hoặc thay đổi cấu hình (Anisette, Profile, Client-Info)");
+    println!("  (không lệnh)  Mở giao diện menu tương tác");
+    println!();
+    println!("Options:");
+    println!("  --profile <1-6|name>     Chọn Device Profile (1: Win, 2: Mac, 3: Pixel7, 4: Sonoma, 5: Ventura, 6: iOS17)");
+    println!("  --client-info, -c <CI>   Tùy chỉnh Client-Info thủ công");
+    println!("  --user-agent <UA>        Tùy chỉnh User-Agent thủ công (khớp Client-Info)");
+    println!("  --anisette <URL>         Chỉ định Anisette server URL");
+    println!("  --help, -h               Hiện hướng dẫn này");
+}
+
+fn handle_config_cli(args: &[String]) {
+    let mut i = 0;
+    let mut did_update = false;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--reset" => {
+                let _ = fortiva::config::Config::reset_client_info();
+                println!("✓ Đã khôi phục Client-Info về mặc định (Windows iTunes 12.12)");
+                did_update = true;
+            }
+            "--profile" => {
+                if i + 1 < args.len() {
+                    i += 1;
+                    if let Ok(true) = fortiva::config::Config::apply_profile(&args[i]) {
+                        println!("✓ Đã lưu Profile '{}' vào config!", args[i]);
+                    } else {
+                        eprintln!("⚠️  Không tìm thấy profile '{}'", args[i]);
+                    }
+                    did_update = true;
+                }
+            }
+            "--client-info" | "-c" => {
+                if i + 1 < args.len() {
+                    i += 1;
+                    let ci = fortiva::constants::sanitize_client_info(&args[i]);
+                    let ua = fortiva::constants::match_user_agent_for_client_info(&ci);
+                    let _ = fortiva::config::Config::set_client_info(Some(&ci), Some(&ua), Some("Custom"));
+                    println!("✓ Đã lưu Client-Info tùy chỉnh vào config!");
+                    did_update = true;
+                }
+            }
+            "--user-agent" => {
+                if i + 1 < args.len() {
+                    i += 1;
+                    let ci = fortiva::config::Config::client_info();
+                    let _ = fortiva::config::Config::set_client_info(Some(&ci), Some(&args[i]), None);
+                    println!("✓ Đã lưu User-Agent vào config!");
+                    did_update = true;
+                }
+            }
+            "--anisette" => {
+                if i + 1 < args.len() {
+                    i += 1;
+                    let _ = fortiva::config::Config::set_anisette_url(&args[i]);
+                    println!("✓ Đã lưu Anisette URL vào config!");
+                    did_update = true;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    if !did_update {
+        println!("Fortiva Configuration:");
+        println!("  • Anisette URL:   {}", fortiva::config::Config::anisette_url());
+        println!("  • Device Profile: {}", fortiva::config::Config::active_profile_name());
+        println!("  • Client-Info:    {}", fortiva::config::Config::client_info());
+        println!("  • User-Agent:     {}", fortiva::config::Config::user_agent());
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() > 1 {
-        match args[1].as_str() {
+
+    // 1. Parse global flags
+    let mut i = 1;
+    let mut command: Option<String> = None;
+    let mut cmd_args: Vec<String> = Vec::new();
+
+    while i < args.len() {
+        match args[i].as_str() {
+            "--client-info" | "-c" => {
+                if i + 1 < args.len() {
+                    i += 1;
+                    std::env::set_var("FORTIVA_CLIENT_INFO", &args[i]);
+                    cmd_args.push("--client-info".to_string());
+                    cmd_args.push(args[i].clone());
+                }
+            }
+            "--profile" => {
+                if i + 1 < args.len() {
+                    i += 1;
+                    if let Some(prof) = fortiva::config::find_profile(&args[i]) {
+                        std::env::set_var("FORTIVA_CLIENT_INFO", prof.client_info);
+                        std::env::set_var("FORTIVA_USER_AGENT", prof.user_agent);
+                    }
+                    cmd_args.push("--profile".to_string());
+                    cmd_args.push(args[i].clone());
+                }
+            }
+            "--user-agent" => {
+                if i + 1 < args.len() {
+                    i += 1;
+                    std::env::set_var("FORTIVA_USER_AGENT", &args[i]);
+                    cmd_args.push("--user-agent".to_string());
+                    cmd_args.push(args[i].clone());
+                }
+            }
+            "--anisette" => {
+                if i + 1 < args.len() {
+                    i += 1;
+                    let _ = fortiva::config::Config::set_anisette_url(&args[i]);
+                    cmd_args.push("--anisette".to_string());
+                    cmd_args.push(args[i].clone());
+                }
+            }
+            "--reset" => {
+                cmd_args.push("--reset".to_string());
+            }
+            "--help" | "-h" => {
+                print_help();
+                return;
+            }
+            arg if !arg.starts_with('-') && command.is_none() => {
+                command = Some(arg.to_string());
+            }
+            other => {
+                cmd_args.push(other.to_string());
+            }
+        }
+        i += 1;
+    }
+
+    if let Some(cmd) = command {
+        match cmd.as_str() {
             "login" => {
                 if let Err(e) = cmd_login_apple_id() {
                     eprintln!("Lỗi đăng nhập: {}", e);
                     std::process::exit(1);
                 }
+                return;
+            }
+            "config" | "profile" => {
+                handle_config_cli(&cmd_args);
                 return;
             }
             "test" | "test-session" | "test-auth" => {
@@ -1111,18 +1377,11 @@ fn main() {
                 }
                 return;
             }
-            "--help" | "-h" => {
-                println!("Fortiva - iOS Sideload Tool");
-                println!("Usage: fortiva [COMMAND]");
-                println!();
-                println!("Commands:");
-                println!("  login         Đăng nhập Apple ID (Python Bridge / Native SRP)");
-                println!("  sign          Ký tự động và cài đặt file IPA");
-                println!("  test          Kiểm tra session với Apple Developer Services");
-                println!("  (không lệnh)  Mở giao diện menu tương tác");
-                return;
+            _ => {
+                eprintln!("Lệnh không hợp lệ: {}", cmd);
+                print_help();
+                std::process::exit(1);
             }
-            _ => {}
         }
     }
 

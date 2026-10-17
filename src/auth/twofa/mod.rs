@@ -7,7 +7,7 @@ use base64::{Engine as _, engine::general_purpose};
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, CONTENT_TYPE, USER_AGENT};
 
 use crate::auth::anisette::AnisetteClient;
-use crate::constants::{fix_client_info, APP_XCODE_AUTH, DEFAULT_CLIENT_INFO, XCODE_UA};
+use crate::constants::{fix_client_info, APP_XCODE_AUTH};
 
 pub use sms::SmsHandler;
 pub use trusted::TrustedDeviceHandler;
@@ -15,6 +15,7 @@ pub use trusted::TrustedDeviceHandler;
 pub struct TwoFAHandler {
     pub client: reqwest::blocking::Client,
     pub client_info: String,
+    pub user_agent: String,
 }
 
 impl TwoFAHandler {
@@ -28,10 +29,21 @@ impl TwoFAHandler {
             .build()
             .expect("reqwest client");
 
+        let client_info = crate::config::Config::client_info();
+        let user_agent = crate::config::Config::user_agent();
+
         Self {
             client,
-            client_info: DEFAULT_CLIENT_INFO.to_string(),
+            client_info,
+            user_agent,
         }
+    }
+
+    pub fn set_client_info(&mut self, ci: &str, ua: Option<&str>) {
+        self.client_info = ci.to_string();
+        self.user_agent = ua
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| crate::constants::match_user_agent_for_client_info(ci));
     }
 
     pub fn build_2fa_headers(
@@ -47,22 +59,22 @@ impl TwoFAHandler {
         let identity_token = general_purpose::STANDARD
             .encode(format!("{}:{}", dsid, idms_token).as_bytes());
 
-        // Fetch anisette trước để update client_info
         let anisette_data = anisette.fetch(false)?;
 
-        if let Some(ci) = anisette_data.get("X-MMe-Client-Info") {
-            self.client_info = fix_client_info(ci);
+        if self.client_info.trim().is_empty() {
+            if let Some(ci) = anisette_data.get("X-MMe-Client-Info") {
+                self.client_info = fix_client_info(ci);
+            } else {
+                self.client_info = crate::config::Config::client_info();
+            }
         }
-        if self.client_info.contains("Xcode") || self.client_info.contains("macOS") {
-            self.client_info = fix_client_info(&self.client_info);
-        }
-        if self.client_info.is_empty() {
-            self.client_info = DEFAULT_CLIENT_INFO.to_string();
+        if self.user_agent.trim().is_empty() {
+            self.user_agent = crate::constants::match_user_agent_for_client_info(&self.client_info);
         }
 
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("text/x-xml-plist"));
         headers.insert(ACCEPT, HeaderValue::from_static("text/x-xml-plist"));
-        headers.insert(USER_AGENT, HeaderValue::from_static(XCODE_UA));
+        headers.insert(USER_AGENT, HeaderValue::from_str(&self.user_agent)?);
         headers.insert("Accept-Language", HeaderValue::from_static("en-us"));
         headers.insert(
             "X-Apple-Identity-Token",

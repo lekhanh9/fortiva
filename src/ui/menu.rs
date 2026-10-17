@@ -32,7 +32,7 @@ pub fn print_menu() {
         MUTED, RESET, PRIMARY, RESET, MUTED, RESET);
     println!("{}│{}  [{}2{}]  🔐  Login Apple ID                     {}│{}",
         MUTED, RESET, PRIMARY, RESET, MUTED, RESET);
-    println!("{}│{}  [{}3{}]  🌐  Custom Anisette Server             {}│{}",
+    println!("{}│{}  [{}3{}]  ⚙️   Config Anisette & Client-Info      {}│{}",
         MUTED, RESET, PRIMARY, RESET, MUTED, RESET);
     println!("{}│{}  [{}4{}]  🔗  Setup SideStore pairing           {}│{}",
         MUTED, RESET, PRIMARY, RESET, MUTED, RESET);
@@ -61,5 +61,8 @@ pub fn print_status(iphone_status: &str) {
 pub fn print_status_with_account(iphone_status: &str, account_status: &str) {
     println!("  {} 📱 iPhone:  {}", primary("Status"), iphone_status);
     println!("  {} 🔑 Account: {}", primary("Status"), account_status);
+    let profile = crate::config::Config::active_profile_name();
+    println!("  {} 🛠️  Profile: {}", primary("Status"), success(&profile));
     println!();
 }
+
