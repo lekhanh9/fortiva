@@ -101,33 +101,42 @@ impl TrustedDeviceHandler {
             let status = resp.status();
             let body = resp.bytes()?;
 
-            if status.is_success() {
-                if let Ok(val) = plist::from_bytes::<Value>(&body) {
-                    let ec = val
-                        .as_dictionary()
-                        .and_then(|d| d.get("Response"))
-                        .and_then(|r| r.as_dictionary())
-                        .and_then(|d| d.get("Status"))
-                        .and_then(|s| s.as_dictionary())
-                        .and_then(|d| d.get("ec"))
-                        .and_then(plist_integer)
-                        .unwrap_or(0);
+            let parsed_plist = plist::from_bytes::<Value>(&body).ok();
+            let ec = parsed_plist
+                .as_ref()
+                .and_then(|v| v.as_dictionary())
+                .and_then(|d| d.get("Response").or_else(|| d.get("Status")))
+                .and_then(|r| r.as_dictionary())
+                .and_then(|d| d.get("Status").and_then(|s| s.as_dictionary()).or(Some(d)))
+                .and_then(|d| d.get("ec"))
+                .and_then(plist_integer)
+                .unwrap_or(0);
 
-                    if ec == 0 {
-                        println!("[2fa] ✅ Xác thực 2FA thành công!");
-                        return Ok(true);
-                    } else if ec == -21669 {
-                        println!("[2fa] ❌ Mã xác minh không chính xác (-21669). Vui lòng thử lại!");
-                        continue;
-                    } else {
-                        eprintln!("[2fa] Validate phản hồi ec={}", ec);
-                    }
-                } else {
-                    println!("[2fa] ✅ Xác thực 2FA thành công (HTTP {})", status);
-                    return Ok(true);
-                }
+            let em = parsed_plist
+                .as_ref()
+                .and_then(|v| v.as_dictionary())
+                .and_then(|d| d.get("Response").or_else(|| d.get("Status")))
+                .and_then(|r| r.as_dictionary())
+                .and_then(|d| d.get("Status").and_then(|s| s.as_dictionary()).or(Some(d)))
+                .and_then(|d| d.get("em"))
+                .and_then(|v| v.as_string())
+                .unwrap_or("");
+
+            if ec == -21669 {
+                println!("[2fa] ❌ Mã xác minh không chính xác (-21669). Vui lòng thử lại!");
+                continue;
+            }
+
+            if status.is_success() || ec == 0 {
+                println!("[2fa] ✅ Xác thực 2FA thành công!");
+                return Ok(true);
             } else {
-                eprintln!("[2fa] HTTP lỗi xác thực: {}", status);
+                if !em.is_empty() {
+                    eprintln!("[2fa] HTTP lỗi xác thực: {} (ec={}, em={})", status, ec, em);
+                } else {
+                    let body_preview = String::from_utf8_lossy(&body[..body.len().min(200)]);
+                    eprintln!("[2fa] HTTP lỗi xác thực: {} - Body: {}", status, body_preview);
+                }
             }
         }
 

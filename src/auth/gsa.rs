@@ -68,7 +68,7 @@ impl GsaClient {
                 &self.user_id,
                 &mut self.device_id,
                 &mut self.client_info,
-                op == "apptokens",
+                false, // Giữ nguyên OTP Anisette của session, không làm mới giữa chừng
             ) {
                 Ok(v) => v,
                 Err(e) => {

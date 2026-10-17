@@ -386,47 +386,82 @@ impl SrpFlow {
                     HeaderValue::from_str(&code)?,
                 );
 
-                let v_resp = twofa
+                let mut v_resp = twofa
                     .client
                     .post(GSA_VALIDATE_URL)
-                    .headers(verify_headers)
+                    .headers(verify_headers.clone())
                     .body("")
                     .timeout(Duration::from_secs(15))
                     .send();
 
-                match v_resp {
-                    Ok(r) if r.status().is_success() => {
-                        let bytes = r.bytes().unwrap_or_default();
-                        if let Ok(val) = plist::from_bytes::<Value>(&bytes) {
-                            let ec = val
-                                .as_dictionary()
-                                .and_then(|d| d.get("Response"))
-                                .and_then(|r| r.as_dictionary())
-                                .and_then(|d| d.get("Status"))
-                                .and_then(|s| s.as_dictionary())
-                                .and_then(|d| d.get("ec"))
-                                .and_then(plist_integer)
-                                .unwrap_or(0);
-                            if ec == -21669 {
-                                println!("[2fa] ❌ Mã xác minh không chính xác (-21669). Vui lòng thử lại!");
-                                continue;
+                // Nếu POST không thành công, thử fallback GET theo chuẩn isideload
+                if let Ok(ref r) = v_resp {
+                    if !r.status().is_success() && r.status().as_u16() != 401 {
+                        if let Ok(get_resp) = twofa
+                            .client
+                            .get(GSA_VALIDATE_URL)
+                            .headers(verify_headers.clone())
+                            .timeout(Duration::from_secs(15))
+                            .send()
+                        {
+                            if get_resp.status().is_success() {
+                                v_resp = Ok(get_resp);
                             }
                         }
-                        println!("[2fa] ✅ Xác thực 2FA thành công! Đang lấy AppToken...");
-                        std::thread::sleep(Duration::from_secs(2));
-                        return self.fetch_app_token(
-                            gsa,
-                            twofa,
-                            adsid,
-                            c,
-                            idms_token,
-                            sk,
-                            session_key,
-                            false,
-                        );
                     }
+                }
+
+                match v_resp {
                     Ok(r) => {
-                        eprintln!("[2fa] Xác thực 2FA thất bại: HTTP {}", r.status());
+                        let status = r.status();
+                        let bytes = r.bytes().unwrap_or_default();
+                        let parsed_plist = plist::from_bytes::<Value>(&bytes).ok();
+                        let ec = parsed_plist
+                            .as_ref()
+                            .and_then(|v| v.as_dictionary())
+                            .and_then(|d| d.get("Response").or_else(|| d.get("Status")))
+                            .and_then(|r| r.as_dictionary())
+                            .and_then(|d| d.get("Status").and_then(|s| s.as_dictionary()).or(Some(d)))
+                            .and_then(|d| d.get("ec"))
+                            .and_then(plist_integer)
+                            .unwrap_or(0);
+
+                        let em = parsed_plist
+                            .as_ref()
+                            .and_then(|v| v.as_dictionary())
+                            .and_then(|d| d.get("Response").or_else(|| d.get("Status")))
+                            .and_then(|r| r.as_dictionary())
+                            .and_then(|d| d.get("Status").and_then(|s| s.as_dictionary()).or(Some(d)))
+                            .and_then(|d| d.get("em"))
+                            .and_then(|v| v.as_string())
+                            .unwrap_or("");
+
+                        if ec == -21669 {
+                            println!("[2fa] ❌ Mã xác minh không chính xác (-21669). Vui lòng thử lại!");
+                            continue;
+                        }
+
+                        if status.is_success() || ec == 0 {
+                            println!("[2fa] ✅ Xác thực 2FA thành công! Đang lấy AppToken...");
+                            std::thread::sleep(Duration::from_secs(2));
+                            return self.fetch_app_token(
+                                gsa,
+                                twofa,
+                                adsid,
+                                c,
+                                idms_token,
+                                sk,
+                                session_key,
+                                false,
+                            );
+                        } else {
+                            if !em.is_empty() {
+                                eprintln!("[2fa] Xác thực 2FA thất bại: HTTP {} (ec={}, em={})", status, ec, em);
+                            } else {
+                                let body_preview = String::from_utf8_lossy(&bytes[..bytes.len().min(200)]);
+                                eprintln!("[2fa] Xác thực 2FA thất bại: HTTP {} - Body: {}", status, body_preview);
+                            }
+                        }
                     }
                     Err(e) => {
                         eprintln!("[2fa] Lỗi kết nối xác thực 2FA: {}", e);

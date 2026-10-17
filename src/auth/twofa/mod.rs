@@ -112,10 +112,13 @@ impl TwoFAHandler {
             }
         }
 
-        headers.insert(
-            "X-Apple-I-MD-LU",
-            HeaderValue::from_str(&general_purpose::STANDARD.encode(dsid.as_bytes()))?,
-        );
+        // Chỉ fallback X-Apple-I-MD-LU nếu trong anisette chưa có
+        if !headers.contains_key("X-Apple-I-MD-LU") {
+            headers.insert(
+                "X-Apple-I-MD-LU",
+                HeaderValue::from_str(&general_purpose::STANDARD.encode(dsid.as_bytes()))?,
+            );
+        }
 
         Ok(headers)
     }
