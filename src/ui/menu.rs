@@ -34,7 +34,7 @@ pub fn print_menu() {
         MUTED, RESET, PRIMARY, RESET, MUTED, RESET);
     println!("{}│{}  [{}3{}]  ⚙️   Config Anisette & Client-Info      {}│{}",
         MUTED, RESET, PRIMARY, RESET, MUTED, RESET);
-    println!("{}│{}  [{}4{}]  🔗  Setup SideStore pairing           {}│{}",
+    println!("{}│{}  [{}4{}]  🔗  Pairing (SideStore / LiveContainer)  {}│{}",
         MUTED, RESET, PRIMARY, RESET, MUTED, RESET);
     println!("{}│{}  [{}5{}]  📱  Manage Devices                     {}│{}",
         MUTED, RESET, PRIMARY, RESET, MUTED, RESET);

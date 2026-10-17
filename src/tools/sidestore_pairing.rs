@@ -14,6 +14,7 @@ use idevice::usbmuxd::{UsbmuxdAddr, UsbmuxdConnection};
 use idevice::IdeviceService;
 
 const SIDESTORE_PREFIX: &str = "com.SideStore.SideStore";
+const LIVECONTAINER_PREFIX: &str = "com.kdt.livecontainer";
 const PAIRING_FILE_NAME: &str = "pairingFile.plist";
 
 pub fn list_pairing_records() -> Vec<PathBuf> {
@@ -51,10 +52,10 @@ pub async fn setup_sidestore_pairing<F>(notify: F) -> Result<()>
 where
     F: Fn(&str) -> Result<bool>,
 {
-    println!("[sidestore] === Setup pairing file ===\n");
+    println!("[pairing] === Setup Pairing File (SideStore & LiveContainer) ===\n");
 
     // 1. Kết nối usbmuxd
-    println!("[sidestore] Kết nối usbmuxd...");
+    println!("[pairing] Kết nối usbmuxd...");
     let mut usbmuxd = UsbmuxdConnection::default()
         .await
         .context("Kết nối usbmuxd thất bại")?;
@@ -69,24 +70,24 @@ where
     }
 
     let device = &devices[0];
-    println!("[sidestore] Device: {}", device.udid);
+    println!("[pairing] Device: {}", device.udid);
 
     // 2. Lấy pairing record từ usbmuxd
-    println!("[sidestore] Lấy pairing record...");
+    println!("[pairing] Lấy pairing record...");
     let mut pairing_file = usbmuxd
         .get_pair_record(&device.udid)
         .await
         .context("Lấy pairing record thất bại (chạy: idevicepair pair)")?;
 
     pairing_file.udid = Some(device.udid.clone());
-    println!("[sidestore] Pairing record OK");
+    println!("[pairing] Pairing record OK");
 
     // 3. Kết nối lockdown + start session
     let addr = UsbmuxdAddr::from_env_var()
         .unwrap_or_else(|_| UsbmuxdAddr::default());
     let provider = device.to_provider(addr, "fortiva");
 
-    println!("[sidestore] Start lockdown session...");
+    println!("[pairing] Start lockdown session...");
     let mut lc = LockdownClient::connect(&provider)
         .await
         .context("Kết nối lockdown thất bại")?;
@@ -94,10 +95,10 @@ where
     lc.start_session(&pairing_file)
         .await
         .context("Start session thất bại")?;
-    println!("[sidestore] ✅ Lockdown session started");
+    println!("[pairing] ✅ Lockdown session started");
 
     // 4. Enable WiFi Debugging
-    println!("[sidestore] Enable WiFi debugging...");
+    println!("[pairing] Enable WiFi debugging...");
     lc.set_value(
         "EnableWifiDebugging",
         plist::Value::Boolean(true),
@@ -105,16 +106,16 @@ where
     )
     .await
     .context("Enable WiFi debugging thất bại")?;
-    println!("[sidestore] ✅ WiFi debugging enabled");
+    println!("[pairing] ✅ WiFi debugging enabled");
 
     // 5. Serialize pairing file
     let pairing_data = pairing_file
         .serialize()
         .context("Serialize pairing file thất bại")?;
-    println!("[sidestore] Pairing file: {} bytes", pairing_data.len());
+    println!("[pairing] Pairing file: {} bytes", pairing_data.len());
 
-    // 6. Tìm SideStore bundle
-    println!("\n[sidestore] Query app list...");
+    // 6. Tìm SideStore & LiveContainer bundles
+    println!("\n[pairing] Tìm kiếm SideStore & LiveContainer trên thiết bị...");
     let mut instproxy = InstallationProxyClient::connect(&provider)
         .await
         .context("Kết nối InstallationProxy thất bại")?;
@@ -124,7 +125,7 @@ where
         .await
         .context("Browse apps thất bại")?;
 
-    let sidestore_bundles: Vec<String> = apps
+    let mut target_bundles: Vec<String> = apps
         .iter()
         .filter_map(|app| app.as_dictionary())
         .filter_map(|d| {
@@ -132,41 +133,59 @@ where
                 .and_then(|v| v.as_string())
                 .map(|s| s.to_string())
         })
-        .filter(|id| id.starts_with(SIDESTORE_PREFIX))
+        .filter(|id| {
+            let lower = id.to_lowercase();
+            id.starts_with(SIDESTORE_PREFIX)
+                || id.starts_with(LIVECONTAINER_PREFIX)
+                || lower.contains("sidestore")
+                || lower.contains("livecontainer")
+                || lower.contains("stik.store")
+                || lower.contains("altstore")
+        })
         .collect();
 
-    if sidestore_bundles.is_empty() {
-        return Err(anyhow!("Không tìm thấy SideStore trên iPhone"));
+    target_bundles.sort();
+    target_bundles.dedup();
+
+    if target_bundles.is_empty() {
+        return Err(anyhow!("Không tìm thấy SideStore hoặc LiveContainer trên iPhone"));
     }
 
-    println!("[sidestore] ✅ {} bundle:", sidestore_bundles.len());
-    for b in &sidestore_bundles {
-        println!("  - {}", b);
+    println!("[pairing] ✅ Tìm thấy {} ứng dụng tương thích:", target_bundles.len());
+    for b in &target_bundles {
+        let tag = if b.to_lowercase().contains("livecontainer") {
+            "[LiveContainer]"
+        } else if b.to_lowercase().contains("sidestore") {
+            "[SideStore]"
+        } else {
+            "[Sideload App]"
+        };
+        println!("  • {:<16} {}", tag, b);
     }
 
     // 7. Ghi pairing file vào từng bundle
-    println!("\n[sidestore] Ghi pairing file...");
+    println!("\n[pairing] Bắt đầu ghi pairing file vào các containers...");
     let mut success = 0;
     let mut failed = Vec::new();
 
-    for (i, bundle_id) in sidestore_bundles.iter().enumerate() {
+    for (i, bundle_id) in target_bundles.iter().enumerate() {
         println!(
-            "\n[sidestore] ({}/{}) {}",
+            "\n[pairing] ({}/{}) {}",
             i + 1,
-            sidestore_bundles.len(),
+            target_bundles.len(),
             bundle_id
         );
 
-        match write_pairing_to_bundle(&provider, bundle_id, &pairing_data).await {
+        match write_pairing_to_bundle(&provider, bundle_id, &device.udid, &pairing_data).await {
             Ok(()) => {
-                println!("[sidestore]   ✅ OK");
+                println!("[pairing]   ✅ Đã ghi thành công!");
                 success += 1;
             }
             Err(e) => {
-                println!("[sidestore]   ❌ {}", e);
+                println!("[pairing]   ❌ {}", e);
                 failed.push(bundle_id.clone());
-                if i + 1 < sidestore_bundles.len() {
-                    if !notify(&format!("Lỗi {}. Tiếp tục?", bundle_id))? {
+                if i + 1 < target_bundles.len() {
+                    if !notify(&format!("Lỗi {}. Tiếp tục các ứng dụng khác?", bundle_id))? {
                         break;
                     }
                 }
@@ -175,22 +194,23 @@ where
     }
 
     println!(
-        "\n[sidestore] Thành công: {}/{}",
+        "\n[pairing] Tổng kết thành công: {}/{}",
         success,
-        sidestore_bundles.len()
+        target_bundles.len()
     );
 
     if success == 0 {
         return Err(anyhow!("Không ghi được bundle nào"));
     }
 
-    println!("\n[sidestore] ✅ Hoàn tất!");
+    println!("\n[pairing] ✅ Hoàn tất ghi pairing file cho SideStore & LiveContainer!");
     Ok(())
 }
 
 async fn write_pairing_to_bundle(
     provider: &impl IdeviceProvider,
     bundle_id: &str,
+    udid: &str,
     data: &[u8],
 ) -> Result<()> {
     let ha = HouseArrestClient::connect(provider)
@@ -202,20 +222,34 @@ async fn write_pairing_to_bundle(
         .await
         .with_context(|| format!("VendContainer thất bại: {}", bundle_id))?;
 
-    let remote_path = format!("/Documents/{}", PAIRING_FILE_NAME);
-    let mut file = afc
-        .open(&remote_path, AfcFopenMode::WrOnly)
-        .await
-        .with_context(|| format!("Mở file để ghi thất bại: {}", remote_path))?;
+    // Đảm bảo thư mục /Documents tồn tại
+    let _ = afc.mk_dir("/Documents").await;
 
-    file.write_entire(data)
+    // Ghi 1: /Documents/pairingFile.plist (chuẩn SideStore & LiveContainer)
+    let remote_path1 = format!("/Documents/{}", PAIRING_FILE_NAME);
+    let mut file1 = afc
+        .open(&remote_path1, AfcFopenMode::WrOnly)
         .await
-        .with_context(|| format!("Ghi file thất bại: {}", remote_path))?;
+        .with_context(|| format!("Mở file để ghi thất bại: {}", remote_path1))?;
 
-    file.close()
+    file1.write_entire(data)
+        .await
+        .with_context(|| format!("Ghi file thất bại: {}", remote_path1))?;
+
+    file1.close()
         .await
         .context("Đóng AFC file thất bại")?;
 
-    println!("[sidestore]   Ghi {} bytes vào {}", data.len(), remote_path);
+    println!("[pairing]   ✓ Ghi {} bytes vào {}", data.len(), remote_path1);
+
+    // Ghi 2: /Documents/{UDID}.plist (chuẩn LiveContainer JIT & StikDebug)
+    let remote_path2 = format!("/Documents/{}.plist", udid);
+    if let Ok(mut file2) = afc.open(&remote_path2, AfcFopenMode::WrOnly).await {
+        if file2.write_entire(data).await.is_ok() {
+            let _ = file2.close().await;
+            println!("[pairing]   ✓ Ghi {} bytes vào {}", data.len(), remote_path2);
+        }
+    }
+
     Ok(())
 }

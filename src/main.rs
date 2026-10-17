@@ -837,14 +837,15 @@ fn cmd_sign_and_install() -> Result<()> {
 
 fn cmd_setup_sidestore_pairing() -> Result<()> {
     theme::clear_screen();
-    log::header("SETUP SIDESTORE PAIRING");
+    log::header("SETUP SIDESTORE & LIVECONTAINER PAIRING");
 
-    println!("  {} Tool ghi pairing file vào SideStore container", theme::muted("→"));
-    println!("  {} để SideStore sideload không cần Mac.", theme::muted("→"));
+    println!("  {} Tool tự động ghi pairing file vào container SideStore & LiveContainer", theme::muted("→"));
+    println!("  {} Hỗ trợ LiveContainer (bật JIT, ký app) và SideStore (sideload on-device).", theme::muted("→"));
+    println!("  {} Tự động kích hoạt WiFi Debugging qua lockdown service.", theme::muted("→"));
     println!();
     println!("  {} Yêu cầu:", theme::muted("→"));
-    println!("    {} iPhone đã cài SideStore", theme::muted("•"));
-    println!("    {} Đã pair 1 lần (idevicepair pair)", theme::muted("•"));
+    println!("    {} iPhone đã cài SideStore hoặc LiveContainer", theme::muted("•"));
+    println!("    {} Đã pair 1 lần với máy (idevicepair pair)", theme::muted("•"));
     println!("    {} usbmuxd đang chạy", theme::muted("•"));
     println!();
 
@@ -866,8 +867,11 @@ fn cmd_setup_sidestore_pairing() -> Result<()> {
     })?;
 
     theme::success_box(
-        "SETUP SIDESTORE THÀNH CÔNG",
-        &["Mở SideStore → Settings để kiểm tra".to_string()],
+        "SETUP PAIRING THÀNH CÔNG",
+        &[
+            "Đã ghi pairing file vào SideStore & LiveContainer!".to_string(),
+            "Mở SideStore hoặc LiveContainer để sử dụng ngay.".to_string(),
+        ],
     );
 
     Ok(())
@@ -1215,6 +1219,7 @@ fn print_help() {
     println!("  login         Đăng nhập Apple ID (Python Bridge / Native SRP)");
     println!("  sign          Ký tự động và cài đặt file IPA");
     println!("  test          Kiểm tra session với Apple Developer Services");
+    println!("  pairing       Ghi pairing file cho SideStore & LiveContainer");
     println!("  config        Xem hoặc thay đổi cấu hình (Anisette, Profile, Client-Info)");
     println!("  (không lệnh)  Mở giao diện menu tương tác");
     println!();
@@ -1373,6 +1378,13 @@ fn main() {
             "sign" => {
                 if let Err(e) = cmd_sign_auto() {
                     eprintln!("Lỗi ký IPA: {}", e);
+                    std::process::exit(1);
+                }
+                return;
+            }
+            "pairing" | "setup-pairing" => {
+                if let Err(e) = cmd_setup_sidestore_pairing() {
+                    eprintln!("Lỗi setup pairing: {}", e);
                     std::process::exit(1);
                 }
                 return;

@@ -31,16 +31,27 @@ pub fn extract_entitlements(
         .clone();
 
     // Special case: LiveContainer / SideStoreLc cần 128 keychain groups
-    if matches!(
+    let is_livecontainer = matches!(
         special,
         Some(SpecialApp::SideStoreLc) | Some(SpecialApp::LiveContainer)
-    ) {
-        let mut keychain_groups = vec![Value::String(format!(
-            "{}.com.kdt.livecontainer.shared",
-            team_id
-        ))];
+    ) || new_bundle_id.to_lowercase().contains("livecontainer");
 
-        for i in 1..128 {
+    let new_app_id = format!("{}.{}", team_id, new_bundle_id);
+    entitlements.insert(
+        "application-identifier".to_string(),
+        Value::String(new_app_id.clone()),
+    );
+    println!("[entitlements] Override app-id: {}", new_app_id);
+
+    if is_livecontainer {
+        println!("[entitlements] 🔑 Thêm 128 Keychain Access Groups cho LiveContainer...");
+        let mut keychain_groups = vec![
+            Value::String(new_app_id.clone()),
+            Value::String(format!("{}.com.kdt.livecontainer.shared", team_id)),
+            Value::String(format!("{}.com.kdt.livecontainer", team_id)),
+        ];
+
+        for i in 1..=128 {
             keychain_groups.push(Value::String(format!(
                 "{}.com.kdt.livecontainer.shared.{}",
                 team_id, i
@@ -51,32 +62,25 @@ pub fn extract_entitlements(
             "keychain-access-groups".to_string(),
             Value::Array(keychain_groups),
         );
-    }
-
-    // Override application-identifier = TEAM_ID.NEW_BUNDLE_ID
-    let new_app_id = format!("{}.{}", team_id, new_bundle_id);
-    entitlements.insert(
-        "application-identifier".to_string(),
-        Value::String(new_app_id.clone()),
-    );
-    println!("[entitlements] Override app-id: {}", new_app_id);
-
-    // keychain-access-groups[0] phải = new_app_id (giữ wildcard nếu có)
-    let should_override = match entitlements.get("keychain-access-groups") {
-        Some(Value::Array(groups)) if !groups.is_empty() => {
-            match &groups[0] {
-                Value::String(s) => s != "*" && !s.ends_with(".*"),
-                _ => true,
+        println!("[entitlements] ✅ 128 keychain-access-groups đã được tạo thành công");
+    } else {
+        // keychain-access-groups[0] phải = new_app_id (giữ wildcard nếu có)
+        let should_override = match entitlements.get("keychain-access-groups") {
+            Some(Value::Array(groups)) if !groups.is_empty() => {
+                match &groups[0] {
+                    Value::String(s) => s != "*" && !s.ends_with(".*"),
+                    _ => true,
+                }
             }
-        }
-        _ => true,
-    };
+            _ => true,
+        };
 
-    if should_override {
-        entitlements.insert(
-            "keychain-access-groups".to_string(),
-            Value::Array(vec![Value::String(new_app_id.clone())]),
-        );
+        if should_override {
+            entitlements.insert(
+                "keychain-access-groups".to_string(),
+                Value::Array(vec![Value::String(new_app_id.clone())]),
+            );
+        }
     }
 
     Ok(entitlements)

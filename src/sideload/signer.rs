@@ -15,7 +15,7 @@ pub fn sign_app(
     cert: &CertificateIdentity,
     profile_data: &[u8],
     ext_profiles: &[(String, Vec<u8>)],
-    _special: &Option<SpecialApp>,
+    special: &Option<SpecialApp>,
     app_group: Option<&str>,
 ) -> Result<()> {
     println!("[sign] === sign_app (apple-codesign) ===");
@@ -76,14 +76,25 @@ pub fn sign_app(
     println!("[sign] Cert chain tự động (WWDR G3 + Root)");
 
     // Set team ID từ certificate
-    if let Some(team_id) = settings.set_team_id_from_signing_certificate() {
+    let team_id = settings
+        .set_team_id_from_signing_certificate()
+        .map(|s| s.to_string())
+        .unwrap_or_default();
+    if !team_id.is_empty() {
         println!("[sign] Team ID: {}", team_id);
     }
 
     // ─────────────────────────────────────────────
     // 3. Entitlements cho MAIN + EXTENSIONS
     // ─────────────────────────────────────────────
-    let main_ent_xml = extract_entitlements_xml_string(profile_data, app_group)?;
+    let main_bundle_id = app.bundle.bundle_identifier().unwrap_or("").to_string();
+    let main_ent_xml = extract_entitlements_xml_string(
+        profile_data,
+        app_group,
+        special,
+        &team_id,
+        &main_bundle_id,
+    )?;
     settings.set_entitlements_xml(SettingsScope::Main, main_ent_xml)?;
     println!("[sign] Main entitlements set");
 
@@ -96,7 +107,13 @@ pub fn sign_app(
             .find(|(id, _)| id == &ext_id)
             .map(|(_, p)| p.as_slice());
         if let Some(ext_prof) = ext_profile {
-            let ext_ent_xml = extract_entitlements_xml_string(ext_prof, app_group)?;
+            let ext_ent_xml = extract_entitlements_xml_string(
+                ext_prof,
+                app_group,
+                &None,
+                &team_id,
+                &ext_id,
+            )?;
             let rel_path = ext.bundle_dir
                 .strip_prefix(&bundle_dir)
                 .map(|p| p.to_string_lossy().replace('\\', "/"))
@@ -137,9 +154,6 @@ fn load_private_key(pem: &str) -> Result<InMemoryPrivateKey> {
         .context("Parse private key DER fail (thử PKCS8/PKCS1)")
 }
 
-
-
-
 /// Load certificate PEM → CapturedX509Certificate.
 fn load_certificate(pem: &str) -> Result<CapturedX509Certificate> {
     CapturedX509Certificate::from_pem(pem)
@@ -147,7 +161,13 @@ fn load_certificate(pem: &str) -> Result<CapturedX509Certificate> {
 }
 
 /// Extract entitlements XML từ profile.
-pub fn extract_entitlements_xml_string(profile_data: &[u8], app_group: Option<&str>) -> Result<String> {
+pub fn extract_entitlements_xml_string(
+    profile_data: &[u8],
+    app_group: Option<&str>,
+    special: &Option<SpecialApp>,
+    team_id: &str,
+    bundle_id: &str,
+) -> Result<String> {
     use plist::Value;
 
     let start = find_subsequence(profile_data, b"<plist");
@@ -182,6 +202,34 @@ pub fn extract_entitlements_xml_string(profile_data: &[u8], app_group: Option<&s
                 println!("[sign] Injected App Group: {}", group);
             }
         }
+    }
+
+    // Special case: LiveContainer / SideStoreLc cần 128 keychain groups
+    let is_livecontainer = matches!(
+        special,
+        Some(SpecialApp::SideStoreLc) | Some(SpecialApp::LiveContainer)
+    ) || bundle_id.to_lowercase().contains("livecontainer");
+
+    if is_livecontainer && !team_id.is_empty() {
+        println!("[sign] 🔑 Thêm 128 Keychain Access Groups cho LiveContainer...");
+        let mut keychain_groups = vec![
+            Value::String(format!("{}.{}", team_id, bundle_id)),
+            Value::String(format!("{}.com.kdt.livecontainer.shared", team_id)),
+            Value::String(format!("{}.com.kdt.livecontainer", team_id)),
+        ];
+
+        for i in 1..=128 {
+            keychain_groups.push(Value::String(format!(
+                "{}.com.kdt.livecontainer.shared.{}",
+                team_id, i
+            )));
+        }
+
+        entitlements.insert(
+            "keychain-access-groups".to_string(),
+            Value::Array(keychain_groups),
+        );
+        println!("[sign] ✅ Đã nhúng 128 keychain-access-groups vào signature entitlements");
     }
 
     let mut buf = Vec::new();
